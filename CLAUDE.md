@@ -36,7 +36,7 @@ AI real estate assistant system with two agents:
 
 ## Realm integration — NOT YET CONNECTED
 
-The precise showing booking is supposed to be placed in **Realm**. There is currently **no Realm tool/API access** in this environment. Until it is connected (see `docs/integrations.md`):
+The precise showing booking is supposed to be placed in **Realm by PropTx** (https://app.realmmlp.ca/signin). Realm has no public API; the planned integration is browser automation, currently blocked on the environment's network policy and credentials (see `docs/integrations.md`). Until it works end-to-end:
 
 - Do everything else end-to-end (lookup, conflict check, calendar hold, CRM log).
 - For the Realm step, output a ready-to-submit booking block (address, MLS/Property ID, date, exact start/end time, client name, agent info) and tell the user to place it in Realm, or draft the request email to the listing agent.
