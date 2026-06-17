@@ -24,7 +24,7 @@
 // The structure, guards, and login attempt are real; only the exact selectors
 // need confirming against the live DOM.
 
-import { launchRealmBrowser, SIGNIN_URL } from './browser.mjs';
+import { launchRealmBrowser, AUTH_URL } from './browser.mjs';
 
 function parseArgs(argv) {
   const out = { confirm: false };
@@ -43,43 +43,45 @@ function requireEnv(name) {
 }
 
 async function login(page, { username, password }) {
-  await page.goto(SIGNIN_URL, { waitUntil: 'load', timeout: 45000 });
-  // Give the SPA a moment to render its login form.
-  await page.waitForTimeout(4000);
+  // Go straight to the Keycloak OIDC auth endpoint (same place the "Member"
+  // button leads). This is a server-rendered Keycloak login page, so its
+  // selectors are standard and stable.
+  await page.goto(AUTH_URL, { waitUntil: 'load', timeout: 45000 });
+  await page.waitForTimeout(2000);
 
-  // Guard: if nothing rendered, the JS host is still blocked. Abort honestly.
-  const inputCount = await page.$$eval('input', (els) => els.length);
-  if (inputCount === 0) {
+  // Guard: if the username field never appears, sso.ampre.ca is still blocked.
+  const userField = await page.waitForSelector('#username, input[name="username"]', { timeout: 10000 }).catch(() => null);
+  if (!userField) {
     throw new Error(
-      'Login form did not render — the Realm SPA JS host is still blocked.\n' +
-      'Run `node scripts/realm/check.mjs` and allowlist any BLOCK! hosts in the\n' +
-      'environment network policy (currently: collab-static.stratuscollab.com).'
+      'Keycloak login form did not render — sso.ampre.ca is likely still blocked.\n' +
+      'Run `node scripts/realm/check.mjs` and allowlist the BLOCK! hosts in the\n' +
+      'environment network policy (sso.ampre.ca for login; collab-static.stratuscollab.com for the portal).'
     );
   }
 
-  // TODO(form-mapping): confirm these selectors against the live rendered form.
-  // Realm/Stratus login is typically a username + password + submit flow.
-  const userSel = 'input[type="text"], input[name*="user" i], input[id*="user" i]';
-  const passSel = 'input[type="password"]';
-  const submitSel = 'button[type="submit"], button:has-text("Sign in"), button:has-text("Login")';
-
-  await page.fill(userSel, username);
-  await page.fill(passSel, password);
-  await page.click(submitSel);
+  // Standard Keycloak login form selectors.
+  await page.fill('#username, input[name="username"]', username);
+  await page.fill('#password, input[name="password"]', password);
+  await page.click('#kc-login, input[type="submit"], button[type="submit"]');
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(3000);
 
-  // Blocker 3: MFA. If a one-time-code field appears, unattended booking is not
-  // possible — bail rather than hang.
-  const mfa = await page.$('input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="code" i]');
-  if (mfa) {
-    throw new Error('Realm prompted for an MFA/2FA code. Unattended booking is not possible until this is resolved (see docs/integrations.md).');
+  // Login error surfaced by Keycloak (bad credentials, etc.).
+  const errEl = await page.$('#input-error, .alert-error, .pf-c-alert__title, .kc-feedback-text');
+  if (errEl) {
+    const msg = (await errEl.innerText().catch(() => '')) || 'invalid credentials';
+    throw new Error(`Keycloak rejected the login: ${msg.trim()}. Check REALM_USERNAME / REALM_PASSWORD.`);
   }
 
-  // Heuristic success check: the login inputs should be gone.
-  const stillOnLogin = await page.$(passSel);
-  if (stillOnLogin) {
-    throw new Error('Login appears to have failed (still on the sign-in page). Check REALM_USERNAME / REALM_PASSWORD.');
+  // MFA: Keycloak shows an OTP field. Unattended booking is impossible if so.
+  const mfa = await page.$('#otp, input[name="otp"], input[autocomplete="one-time-code"]');
+  if (mfa) {
+    throw new Error('Realm/Keycloak prompted for an MFA/2FA code. Unattended booking is not possible until this is resolved (see docs/integrations.md).');
+  }
+
+  // Success = redirected off the SSO host back to the Realm app.
+  if (/sso\.ampre\.ca/.test(page.url())) {
+    throw new Error(`Login did not complete — still on the SSO host (${page.url()}).`);
   }
 }
 

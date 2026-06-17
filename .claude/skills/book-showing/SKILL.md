@@ -31,7 +31,7 @@ Show the user one summary line — client, address, date, exact start–end time
 
 ## Execute (in this order)
 
-1. **Realm booking** — Realm automation is scaffolded in `scripts/realm/` but still gated on a network-policy change (see `docs/integrations.md`, blocker 4: `collab-static.stratuscollab.com` is blocked, so the login form can't render). Until that clears, output a "Realm booking block" the user can paste in:
+1. **Realm booking** — Realm automation is scaffolded in `scripts/realm/` but still gated on two network-policy changes (see `docs/integrations.md`: `sso.ampre.ca` is blocked so the Keycloak login can't load, and `collab-static.stratuscollab.com` is blocked so the portal can't render). Until those clear, output a "Realm booking block" the user can paste in:
 
    ```
    Property: <address> (ID: <property id>)

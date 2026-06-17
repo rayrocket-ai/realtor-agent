@@ -62,3 +62,13 @@ export async function launchRealmBrowser({ headless = true } = {}) {
 }
 
 export const SIGNIN_URL = process.env.REALM_SIGNIN_URL || 'https://app.realmmlp.ca/signin';
+
+// The "Member" button on the sign-in page redirects to TRREB's Keycloak SSO
+// (sso.ampre.ca) via this OpenID Connect auth URL. The login form lives there —
+// it is server-rendered Keycloak HTML, NOT the React SPA, so it renders without
+// collab-static.stratuscollab.com. On success Keycloak redirects back to the
+// redirect_uri with a code and app.realmmlp.ca establishes the session.
+export const AUTH_URL = process.env.REALM_AUTH_URL ||
+  'https://sso.ampre.ca/realms/trreb/protocol/openid-connect/auth' +
+  '?client_id=app.realmmlp.ca&scope=openid%20profile%20email&response_type=code' +
+  '&redirect_uri=https%3A%2F%2Fapp.realmmlp.ca%2Fauth%2Famp%2Fcallback';

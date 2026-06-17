@@ -13,20 +13,30 @@ with Playwright.
 | `check.mjs` | Connectivity diagnostic. Probes every host the SPA needs and reports whether the login form actually renders. **Run this first.** |
 | `book.mjs` | Signs in and submits a showing request. Dry-run by default. |
 
+## Login flow
+
+`app.realmmlp.ca/signin` → **Member** button → TRREB **Keycloak SSO** on
+`sso.ampre.ca` (OIDC). The login form is server-rendered Keycloak HTML, so
+`book.mjs` goes straight to the OIDC auth URL and fills the standard
+`#username` / `#password` / `#kc-login` fields. On success Keycloak redirects
+back to `app.realmmlp.ca/auth/amp/callback`.
+
 ## Current status (verified 2026-06-17)
 
-`check.mjs` says **BLOCKED**. Two of the original blockers are cleared:
+`check.mjs` says **BLOCKED**. Cleared:
 
-- ✅ `*.realmmlp.ca` is allowlisted (app / e-login / portal all reachable).
-- ✅ `REALM_USERNAME` / `REALM_PASSWORD` are set in the environment.
+- ✅ `*.realmmlp.ca` allowlisted (app shell + OIDC callback reachable).
+- ✅ `REALM_USERNAME` / `REALM_PASSWORD` set in the environment.
 - ✅ Chromium + Playwright work through the proxy.
+- ✅ Login flow mapped to Keycloak (selectors wired, no guessing needed).
 
-The remaining gate is **one network-policy change**: the Realm SPA loads its
-JavaScript from `collab-static.stratuscollab.com`, which the proxy still blocks
-(403). With the JS blocked the login form never renders, so automation cannot
-proceed. Allowlist that host (and re-run `check.mjs`) to unblock.
+Two network-policy changes remain:
 
-Likely also needed for full function once you're in:
+- ⛔ `sso.ampre.ca` — Keycloak login host (403). **Gates login.**
+- ⛔ `collab-static.stratuscollab.com` — React SPA JS (403). **Gates the
+  portal/booking UI after login.**
+
+Likely also needed once logged in:
 `realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`.
 
 ## Running
@@ -45,13 +55,13 @@ node scripts/realm/book.mjs ... --confirm
 
 ## Remaining work once `check.mjs` is green
 
-1. **Map the login selectors** in `browser.mjs`/`book.mjs` against the rendered
-   form (the `TODO(form-mapping)` markers).
+1. **Verify the Keycloak login** — selectors are already wired (standard
+   Keycloak); confirm a clean sign-in and that no MFA is enforced for this
+   account. `book.mjs` aborts on an OTP prompt if it is.
 2. **Implement `submitShowing()`** in `book.mjs` — navigate to the listing and
-   fill the real showing-request form. Capture the confirmation number.
-3. **Handle MFA** if Realm prompts for a code (`book.mjs` already detects and
-   aborts on it; decide on an attended-login or session-reuse workaround).
-4. **Wire into the skill** — replace step 1 of `.claude/skills/book-showing/SKILL.md`
+   fill the real showing-request form (the `TODO(form-mapping)` marker).
+   Capture the confirmation number.
+3. **Wire into the skill** — replace step 1 of `.claude/skills/book-showing/SKILL.md`
    with a call to `book.mjs --confirm` and record the returned confirmation.
 
 Until then the skill keeps emitting the paste-ready Realm block and never claims
