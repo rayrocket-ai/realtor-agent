@@ -1,0 +1,10 @@
+{
+  "name": "realm-automation",
+  "private": true,
+  "type": "module",
+  "description": "Browser automation for Realm by PropTx showing requests (book-showing step 1).",
+  "scripts": {
+    "check": "node check.mjs",
+    "book": "node book.mjs"
+  }
+}

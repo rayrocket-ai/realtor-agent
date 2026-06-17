@@ -31,7 +31,7 @@ Show the user one summary line — client, address, date, exact start–end time
 
 ## Execute (in this order)
 
-1. **Realm booking** — Realm is not yet connected (see `docs/integrations.md`). Output a "Realm booking block" the user can paste in:
+1. **Realm booking** — Realm automation is scaffolded in `scripts/realm/` but still gated on a network-policy change (see `docs/integrations.md`, blocker 4: `collab-static.stratuscollab.com` is blocked, so the login form can't render). Until that clears, output a "Realm booking block" the user can paste in:
 
    ```
    Property: <address> (ID: <property id>)
@@ -40,7 +40,7 @@ Show the user one summary line — client, address, date, exact start–end time
    Listing agent: <name, contact from Agents table>
    ```
 
-   Never state or imply the Realm booking was placed. Once a Realm tool is connected, replace this step with the real call and record the confirmation number it returns.
+   Never state or imply the Realm booking was placed. Once `node scripts/realm/check.mjs` reports UNBLOCKED and the form selectors are mapped, replace this step with a call to `scripts/realm/book.mjs --confirm` and record the confirmation number it returns.
 
 2. **Calendar event** — create on the "Real Estate" calendar: title `Showing — <address> (<client name>)`, correct start/end, description containing client contact info, Property ID, and listing agent contact.
 

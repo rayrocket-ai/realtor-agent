@@ -6,22 +6,24 @@
 - **Google Calendar** — read/write. Showings calendar: "Real Estate" (`ehjgv5aqlbh60bbp4g502gkid4@group.calendar.google.com`).
 - **Gmail** — drafts only by policy; the user reviews and sends.
 
-## Realm — REQUIRED, not yet connected
+## Realm — REQUIRED, automation scaffolded, one network blocker left
 
-**Confirmed platform:** Realm by PropTx — member sign-in at https://app.realmmlp.ca/signin (TRREB/PropTx MLS system). Realm has no public booking API, so the integration path is browser automation against the member portal (or its showing-request flow, e.g. BrokerBay if the brokerage routes through it).
+**Confirmed platform:** Realm by PropTx — member sign-in at https://app.realmmlp.ca/signin (TRREB/PropTx MLS system). Realm has no public booking API, so the integration path is browser automation against the member portal. The Playwright harness lives in `scripts/realm/` (see its README). Run `node scripts/realm/check.mjs` for live connectivity status.
 
-Blockers, in order:
+Blocker status (verified 2026-06-17):
 
-1. **Network policy** — as of 2026-06-12 this remote environment blocks all outbound web traffic (403 from the proxy for app.realmmlp.ca and even google.com). The user must change the environment's network policy in Claude Code on the web settings to allow `app.realmmlp.ca` (plus any auth/asset domains it redirects to) before any automation is possible. Docs: https://code.claude.com/docs/en/claude-code-on-the-web
-2. **Credentials** — Realm member username/password supplied as environment variables (e.g. `REALM_USERNAME`, `REALM_PASSWORD`) in the environment settings. Never commit credentials to the repo or paste them into chat history.
-3. **MFA/2FA** — if Realm prompts for a code at login, fully unattended booking isn't possible; the user will need to approve logins or provide a session workaround.
-4. **Booking form mapping** — a screenshot or field list of Realm's showing-request form, so agent data (address/MLS#, date, exact time, client) maps onto it correctly.
+1. ✅ **Network policy (partial)** — `*.realmmlp.ca` is now allowlisted: `app.realmmlp.ca`, `e-login.realmmlp.ca`, `browser.realmmlp.ca` all reachable through the proxy. (General web is still blocked, e.g. google.com → 403, which is fine.)
+2. ✅ **Credentials** — `REALM_USERNAME` / `REALM_PASSWORD` are set as environment variables. Never commit credentials to the repo or paste them into chat history.
+3. ✅ **Browser runtime** — Chromium + Playwright work through the environment's TLS-intercepting proxy (`browser.mjs` handles the proxy + cert wiring).
+4. ⛔ **App JS host still blocked (THE gating blocker)** — the Realm SPA loads its JavaScript bundles from `collab-static.stratuscollab.com`, which the proxy blocks (403). The sign-in page returns HTTP 200 but renders an **empty** `<div id="root">` with zero inputs, so the login form never appears and automation cannot proceed. **Action:** allowlist `collab-static.stratuscollab.com` in the environment's network policy (Claude Code on the web settings: https://code.claude.com/docs/en/claude-code-on-the-web), then re-run `scripts/realm/check.mjs`. Likely also needed once logged in: `realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`.
+5. ⏳ **MFA/2FA** — unknown until the form renders. `book.mjs` detects a code prompt at login and aborts (unattended booking is impossible if MFA is enforced; would need attended login or session reuse).
+6. ⏳ **Booking form mapping** — the login/showing-request selectors (`TODO(form-mapping)` in `scripts/realm/`) can only be finalised against the rendered DOM, i.e. after blocker 4 clears.
 
-Once 1–2 are in place, build a small Playwright script (`scripts/realm_book.py` or similar) that signs in, finds the listing, and submits the showing request, then wire it into step 1 of the `book-showing` skill.
+Next step is purely the blocker-4 allowlist change; the script structure, proxy/cert handling, login attempt, MFA guard, and dry-run safety are already in place and tested.
 
 ### Interim behavior
 
-Until one of the above exists, the `book-showing` skill outputs a paste-ready booking block and never claims a Realm booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
+Until blocker 4 clears and the form is mapped, the `book-showing` skill outputs a paste-ready booking block and never claims a Realm booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
 
 ## Also available (not used yet)
 
