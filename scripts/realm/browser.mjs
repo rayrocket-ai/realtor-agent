@@ -48,9 +48,13 @@ const CHROME_PATH =
  *   (cookies + localStorage) to restore an authenticated session.
  */
 export async function launchRealmBrowser({ headless = true, storageState = null } = {}) {
+  // REALM_HEADED=1 forces a headed browser (run under xvfb-run on a headless
+  // host). Headed Chromium can clear automation/reCAPTCHA checks that headless
+  // trips, including BrokerBay's submit-time "logged out" rejection.
+  const runHeadless = process.env.REALM_HEADED === '1' ? false : headless;
   const browser = await chromium.launch({
     executablePath: CHROME_PATH,
-    headless,
+    headless: runHeadless,
     // --disable-blink-features=AutomationControlled reduces automation
     // fingerprinting (hides navigator.webdriver). NOTE: this alone did NOT clear
     // BrokerBay's submit-time "You have been logged out" rejection in the remote
