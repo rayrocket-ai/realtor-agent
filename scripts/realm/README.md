@@ -25,8 +25,13 @@ back to `app.realmmlp.ca/auth/amp/callback`.
 
 ## Current status (verified 2026-06-18)
 
-**Working end-to-end** — login through to a filled BrokerBay booking form, in a
-single unattended run. `check.mjs` exits 0.
+**Login → booking form fill → dry-run all work** in a single unattended run;
+`check.mjs` exits 0. **The final "Book Showing" submit is blocked by Google
+reCAPTCHA** (`www.google.com/recaptcha`), which is egress-blocked — the form
+hangs and no request is sent. Allowlist `www.google.com/recaptcha` +
+`www.gstatic.com` and start a new session to place real bookings. `book.mjs`
+detects the block on `--confirm` and aborts honestly (see `docs/integrations.md`
+§10).
 
 - ✅ `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`,
   `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`,

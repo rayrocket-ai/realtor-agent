@@ -26,8 +26,33 @@
 //
 // Flow + selectors verified live 2026-06-18 (see docs/integrations.md §8–9).
 
+import { existsSync, writeFileSync } from 'node:fs';
 import { launchRealmBrowser } from './browser.mjs';
 import { login, requireEnv } from './login.mjs';
+
+// Reuse an authenticated session across runs so a dry-run + a --confirm (or
+// several bookings in a row) don't each trigger a fresh SMS-MFA login. Falls
+// back to a full login if there's no saved state or it has expired.
+const STATE = process.env.REALM_STATE || '/tmp/realm-state.json';
+
+async function ensureSession(creds) {
+  if (existsSync(STATE)) {
+    const ctx = await launchRealmBrowser({ headless: true, storageState: STATE });
+    await ctx.page.goto('https://app.realmmlp.ca/dashboard', { waitUntil: 'load', timeout: 45000 }).catch(() => {});
+    await ctx.page.waitForTimeout(3000);
+    if (!/signin|sso\.ampre/.test(ctx.page.url())) { console.log('[realm] reused saved session.'); return ctx; }
+    console.log('[realm] saved session expired — signing in again.');
+    await ctx.browser.close();
+  }
+  const ctx = await launchRealmBrowser({ headless: true });
+  await login(ctx.page, creds);
+  writeFileSync(STATE, JSON.stringify(await ctx.context.storageState()));
+  // Land on the dashboard so address-search resolution has the search UI ready.
+  await ctx.page.goto('https://app.realmmlp.ca/dashboard', { waitUntil: 'load', timeout: 45000 }).catch(() => {});
+  await ctx.page.waitForTimeout(3000);
+  console.log('[realm] signed in, session saved.');
+  return ctx;
+}
 
 function parseArgs(argv) {
   const out = { confirm: false };
@@ -201,24 +226,49 @@ async function fillBooking(target, booking) {
   return { dur, selected };
 }
 
-// Click "Book Showing" and read back BrokerBay's result. Best-effort confirmation
-// capture: returns whatever success text/reference the UI shows after submit.
+// Click "Book Showing" and wait for BrokerBay to actually accept the request.
+// The submit is gated on Google reCAPTCHA (www.google.com/recaptcha/api.js); if
+// that host is egress-blocked the form spins forever and NO request is sent, so
+// we watch for the captcha failure and a real success signal rather than
+// assuming the click worked. Returns { text, ref } on success; throws otherwise.
 async function submitBooking(target) {
   const fr = bbFrame(target);
   const book = fr.getByRole('button', { name: /^book showing$/i }).first();
   if (!(await book.count())) throw new Error('"Book Showing" button not found — form not ready to submit.');
   if (await book.isDisabled().catch(() => false)) throw new Error('"Book Showing" is disabled — date/time/duration incomplete.');
 
+  // Detect the reCAPTCHA dependency failing to load (the silent-hang cause).
+  let captchaBlocked = false;
+  const onFail = (r) => { if (/google\.com\/recaptcha|gstatic\.com\/recaptcha/.test(r.url())) captchaBlocked = true; };
+  target.on('requestfailed', onFail);
+
   await book.click({ timeout: 10000 });
-  // Wait for a confirmation/toast/modal, or the booking to land on a detail view.
-  await target.waitForTimeout(6000);
-  const result = await bbFrame(target).evaluate(() => {
-    const pick = document.querySelector('[class*="confirm" i],[class*="success" i],.ant-modal-body,.ant-message,.toast,[class*="appointment-detail" i]');
-    const text = (pick?.innerText || document.body?.innerText || '').replace(/\s+/g, ' ').trim();
-    const ref = (text.match(/(confirmation|reference|appointment)[^\w]{0,3}#?\s*([A-Z0-9-]{4,})/i) || [])[2] || null;
-    return { text: text.slice(0, 600), ref };
-  }).catch(() => ({ text: '', ref: null }));
-  return result;
+
+  // Poll for a genuine acceptance signal; bail out fast if reCAPTCHA is blocked.
+  const SUCCESS = /request is being processed|showing (request|has been) (submitted|confirmed|booked|requested)|successfully|your showing/i;
+  for (let i = 0; i < 8; i++) {
+    await target.waitForTimeout(3000);
+    const text = await bbFrame(target).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+    if (SUCCESS.test(text)) {
+      target.off('requestfailed', onFail);
+      const ref = (text.match(/(confirmation|reference|appointment)[^\w]{0,3}#?\s*([A-Z0-9-]{4,})/i) || [])[2] || null;
+      return { text: text.slice(0, 600), ref };
+    }
+  }
+  target.off('requestfailed', onFail);
+
+  if (captchaBlocked) {
+    throw new Error(
+      'Booking did NOT go through — Google reCAPTCHA is blocked. BrokerBay requires ' +
+      'www.google.com/recaptcha (and www.gstatic.com/recaptcha) to submit a showing; the ' +
+      'form hangs without it. Allowlist those hosts in the network policy, start a NEW ' +
+      'session, then re-run with --confirm.'
+    );
+  }
+  throw new Error(
+    'Booking did NOT complete — no confirmation appeared within the timeout and the form is ' +
+    'stuck in a submitting state. Nothing was booked. Check BrokerBay manually before retrying.'
+  );
 }
 
 (async () => {
@@ -238,12 +288,9 @@ async function submitBooking(target) {
 
   const creds = { username: requireEnv('REALM_USERNAME'), password: requireEnv('REALM_PASSWORD') };
 
-  const { browser, context, page } = await launchRealmBrowser({ headless: true });
+  console.log(`[realm] ${args.confirm ? 'BOOKING (will submit on success)' : 'DRY RUN — will NOT submit'}...`);
+  const { browser, context, page } = await ensureSession(creds);
   try {
-    console.log(`[realm] signing in${args.confirm ? '' : ' (DRY RUN — will NOT submit)'}...`);
-    await login(page, creds);
-    console.log('[realm] signed in.');
-
     const listingId = await resolveListingId(page, booking);
     console.log(`[realm] opening booking view for ${listingId}...`);
     const bb = await openBookingView(page, context, listingId);
@@ -262,13 +309,8 @@ async function submitBooking(target) {
     console.log('[realm] submitting booking...');
     const res = await submitBooking(bb);
     await bb.screenshot({ path: '/tmp/realm-booking-result.png', fullPage: true }).catch(() => {});
-    if (res.ref) {
-      console.log(`[realm] BOOKING PLACED. Confirmation/reference: ${res.ref}`);
-    } else {
-      console.log('[realm] Submit clicked. Could not parse a confirmation number from the result.');
-      console.log('[realm] Verify in BrokerBay before telling the client. Result text:');
-      console.log('        ' + (res.text || '(empty)'));
-    }
+    console.log('[realm] BOOKING PLACED — BrokerBay accepted the request.' +
+      (res.ref ? ` Confirmation/reference: ${res.ref}` : ' (No reference number shown; check the confirmation email.)'));
     console.log('[realm] result screenshot: /tmp/realm-booking-result.png');
   } catch (err) {
     await page.screenshot({ path: '/tmp/realm-last.png', fullPage: true }).catch(() => {});

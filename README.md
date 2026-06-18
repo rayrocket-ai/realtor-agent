@@ -6,7 +6,7 @@ AI real estate agent system: book showings and submit offers.
 
 | Agent | Skill | Status |
 |---|---|---|
-| Booking agent | `/book-showing` | Working — Realm/BrokerBay booking automated end-to-end (see `docs/integrations.md`) |
+| Booking agent | `/book-showing` | Working — Realm/BrokerBay flow automated (login → form fill → dry-run); final submit pending a reCAPTCHA allowlist (see `docs/integrations.md` §10) |
 | Offer agent | `/submit-offer` | Stub — built after booking agent is approved |
 
 ## Usage
@@ -16,7 +16,7 @@ In a Claude Code session on this repo, just ask naturally — both entry points 
 - `book a showing for Sarah Chen` (client-name mode: agent looks up the client, their interested listings, and proposes times)
 - `book 123 Main St this Saturday at 2pm` (address + time mode: agent books directly)
 
-The agent looks up clients/listings in Airtable, checks the "Real Estate" Google Calendar for conflicts, confirms the exact slot with you, then places the showing in Realm/BrokerBay via `scripts/realm/book.mjs` (dry-run first, then `--confirm`), creates the calendar event, logs the showing in the CRM table, and drafts the client confirmation email. If a listing isn't bookable online, it falls back to a paste-ready Realm block and never claims a booking was made.
+The agent looks up clients/listings in Airtable, checks the "Real Estate" Google Calendar for conflicts, confirms the exact slot with you, then drives the showing in Realm/BrokerBay via `scripts/realm/book.mjs` (login + form fill + dry-run work today; the final submit is blocked until the reCAPTCHA hosts in `docs/integrations.md` §10 are allowlisted), creates the calendar event, logs the showing in the CRM table, and drafts the client confirmation email. Until the submit clears, it falls back to a paste-ready Realm block and never claims a booking was made.
 
 ## Repo layout
 

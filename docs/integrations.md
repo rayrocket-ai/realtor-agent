@@ -6,7 +6,7 @@
 - **Google Calendar** — read/write. Showings calendar: "Real Estate" (`ehjgv5aqlbh60bbp4g502gkid4@group.calendar.google.com`).
 - **Gmail** — drafts only by policy; the user reviews and sends.
 
-## Realm — REQUIRED, automation working end-to-end
+## Realm — REQUIRED, automation built; submit gated on reCAPTCHA egress
 
 **Confirmed platform:** Realm by PropTx — member sign-in at https://app.realmmlp.ca/signin (TRREB/PropTx MLS system). Realm has no public booking API, so the integration path is browser automation against the member portal. The Playwright harness lives in `scripts/realm/` (see its README). Run `node scripts/realm/check.mjs` for live connectivity status.
 
@@ -54,11 +54,25 @@ The listing page also carries the listing agent + brokerage (e.g. PAT PISANTI, R
    - **Step 3 – Time:** 15-minute `.timeslot` divs whose class encodes availability — plain `.timeslot` is bookable, `.timeslot-unavailable` is taken/blocked, `.timeslot-p` is in the past. Selecting a slot marks it `.timeslot-selected` and reveals a **Duration** radio (`input[name="duration"]`, values `15`/`30`, capped per listing) plus a **Done** button.
    - **Submit:** the `Book Showing` button (`button.ant-btn`, text "Book Showing") becomes enabled once date + slot + duration are set. `book.mjs` clicks it only with `--confirm` and reads back the result.
 
-   `book.mjs` resolves the listing (`--listing`, `--mls` → `TREB-<MLS#>`, or `--address` via Realm search), opens the Online Appt handoff, fills the form, and is dry-run by default. Live slot availability comes over the Pusher socket, so it doubles as the real-time conflict check on the listing side.
+   `book.mjs` resolves the listing (`--listing`, `--mls` → `TREB-<MLS#>`, or `--address` via Realm search), opens the Online Appt handoff, fills the form, and is dry-run by default. Live slot availability comes over the Pusher socket, so it doubles as the real-time conflict check on the listing side. **Form-fill and dry-run are verified end-to-end** (login → BrokerBay → date/slot/duration selected); the final submit is blocked by reCAPTCHA — see §10.
+
+10. ⛔ **"Book Showing" submit is gated on Google reCAPTCHA, which is egress-blocked (found 2026-06-18 — the first time the form was actually submitted).** Clicking "Book Showing" puts the form into a submitting state that **hangs forever** — no booking POST is sent and no request email arrives. Network capture during the click shows the cause:
+
+    ```
+    [FAIL] GET www.google.com/recaptcha/api.js :: net::ERR_ABORTED
+    ```
+
+    BrokerBay requires a reCAPTCHA token before it will POST the showing request. With the captcha script blocked, the token never resolves and the submit silently stalls. (The `events.launchdarkly.com/events/bulk` POST failures in the same trace are telemetry only and irrelevant.)
+
+    **Action — allowlist the reCAPTCHA hosts, then start a NEW session:**
+    - `www.google.com/recaptcha` (the `api.js` loader)
+    - `www.gstatic.com` (reCAPTCHA assets/frames; broadly safe and already needed by many widgets)
+
+    `book.mjs` now detects this: on `--confirm` it watches for the reCAPTCHA request failure and, if the submit doesn't confirm, aborts with a clear message and exit 1 instead of pretending success. Verified 2026-06-18 that no request is created while blocked (no "Showing Request" email is generated).
 
 ### Behavior
 
-The `book-showing` skill now places the showing through `book.mjs` (dry-run → confirm) when `check.mjs` is UNBLOCKED, and records the confirmation it reads back. If the listing isn't bookable online or a session is BLOCKED, it falls back to the paste-ready booking block and never claims a booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
+The `book-showing` skill drives `book.mjs` for the Realm/BrokerBay step. Today it can log in, open the booking view, and fill/dry-run the form for real, but it **cannot complete the submit until the reCAPTCHA hosts in §10 are allowlisted in a fresh session** — so for now it confirms the slot via dry-run, then falls back to the paste-ready booking block and never claims a booking was made. Once reCAPTCHA clears, `book.mjs --confirm` places the request and records the confirmation. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
 
 ### Discovery tooling
 
