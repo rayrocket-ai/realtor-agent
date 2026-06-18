@@ -28,7 +28,7 @@ back to `app.realmmlp.ca/auth/amp/callback`.
 **Login → booking form fill → dry-run all work** in a single unattended run;
 `check.mjs` exits 0. **The final "Book Showing" submit is blocked by Google
 reCAPTCHA** (`www.google.com/recaptcha`), which is egress-blocked — the form
-hangs and no request is sent. Allowlist `www.google.com/recaptcha` +
+hangs and no request is sent. Allowlist the domains `www.google.com` +
 `www.gstatic.com` and start a new session to place real bookings. `book.mjs`
 detects the block on `--confirm` and aborts honestly (see `docs/integrations.md`
 §10).

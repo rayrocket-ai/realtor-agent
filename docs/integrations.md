@@ -64,8 +64,8 @@ The listing page also carries the listing agent + brokerage (e.g. PAT PISANTI, R
 
     BrokerBay requires a reCAPTCHA token before it will POST the showing request. With the captcha script blocked, the token never resolves and the submit silently stalls. (The `events.launchdarkly.com/events/bulk` POST failures in the same trace are telemetry only and irrelevant.)
 
-    **Action — allowlist the reCAPTCHA hosts, then start a NEW session:**
-    - `www.google.com/recaptcha` (the `api.js` loader)
+    **Action — allowlist the reCAPTCHA hosts (domains only, no paths), then start a NEW session:**
+    - `www.google.com` (serves the reCAPTCHA `api.js` loader at `/recaptcha/api.js`)
     - `www.gstatic.com` (reCAPTCHA assets/frames; broadly safe and already needed by many widgets)
 
     `book.mjs` now detects this: on `--confirm` it watches for the reCAPTCHA request failure and, if the submit doesn't confirm, aborts with a clear message and exit 1 instead of pretending success. Verified 2026-06-18 that no request is created while blocked (no "Showing Request" email is generated).

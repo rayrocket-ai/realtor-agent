@@ -259,10 +259,10 @@ async function submitBooking(target) {
 
   if (captchaBlocked) {
     throw new Error(
-      'Booking did NOT go through — Google reCAPTCHA is blocked. BrokerBay requires ' +
-      'www.google.com/recaptcha (and www.gstatic.com/recaptcha) to submit a showing; the ' +
-      'form hangs without it. Allowlist those hosts in the network policy, start a NEW ' +
-      'session, then re-run with --confirm.'
+      'Booking did NOT go through — Google reCAPTCHA is blocked. BrokerBay needs the ' +
+      'domains www.google.com and www.gstatic.com to submit a showing; the form hangs ' +
+      'without them. Allowlist those domains in the network policy, start a NEW session, ' +
+      'then re-run with --confirm.'
     );
   }
   throw new Error(
