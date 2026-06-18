@@ -227,26 +227,64 @@ async function fillBooking(target, booking) {
 }
 
 // Click "Book Showing" and wait for BrokerBay to actually accept the request.
-// The submit is gated on Google reCAPTCHA (www.google.com/recaptcha/api.js); if
-// that host is egress-blocked the form spins forever and NO request is sent, so
-// we watch for the captcha failure and a real success signal rather than
-// assuming the click worked. Returns { text, ref } on success; throws otherwise.
+//
+// The submit button ("Book Showing") sits in a sticky header. Scrolling it into
+// view re-renders the time-slot list and de-selects the slot (disabling the
+// button), so DON'T scroll — the tall viewport set in browser.mjs keeps the whole
+// form on-screen, letting us fire a real (trusted) Playwright click in place. A
+// synthetic el.click() is NOT enough: BrokerBay's handler ignores untrusted events.
+//
+// reCAPTCHA Enterprise (score-based, invisible) runs on submit and POSTs to
+// /recaptcha/enterprise/reload for a token. We only treat reCAPTCHA as the cause
+// of a failure if one of its *core* resources actually fails to load — the
+// /recaptcha/enterprise/clr telemetry beacon is routinely ERR_ABORTED on idle and
+// is NOT a failure, so ignoring it avoids false "captcha blocked" reports.
+//
+// Returns { text, ref } on a confirmed submit; throws (booking NOT placed) otherwise.
 async function submitBooking(target) {
   const fr = bbFrame(target);
-  const book = fr.getByRole('button', { name: /^book showing$/i }).first();
-  if (!(await book.count())) throw new Error('"Book Showing" button not found — form not ready to submit.');
-  if (await book.isDisabled().catch(() => false)) throw new Error('"Book Showing" is disabled — date/time/duration incomplete.');
 
-  // Detect the reCAPTCHA dependency failing to load (the silent-hang cause).
-  let captchaBlocked = false;
-  const onFail = (r) => { if (/google\.com\/recaptcha|gstatic\.com\/recaptcha/.test(r.url())) captchaBlocked = true; };
+  // The button enables only once a valid date + time + duration are selected.
+  // Confirm an enabled instance exists before attempting the (trusted) click.
+  const enabled = await fr.evaluate(() => [...document.querySelectorAll('button')]
+    .some((b) => /^book showing$/i.test((b.innerText || '').trim()) && !b.disabled));
+  if (!enabled) {
+    throw new Error('"Book Showing" is disabled — the date/time/duration selection did not register. Nothing was submitted.');
+  }
+  const book = fr.getByRole('button', { name: /^book showing$/i }).first();
+
+  let captchaCoreFailed = false;
+  const onFail = (r) => {
+    const u = r.url();
+    if (/recaptcha\/(enterprise\.js|api\.js)/.test(u) ||
+        /recaptcha\/enterprise\/(anchor|reload)/.test(u) ||
+        /gstatic\.com\/recaptcha\/releases/.test(u)) captchaCoreFailed = true;
+  };
   target.on('requestfailed', onFail);
 
-  await book.click({ timeout: 10000 });
+  // Surface BrokerBay's submit-time error (e.g. an automation/"logged out" rejection)
+  // so a failure is reported honestly instead of as a silent timeout.
+  let submitError = null;
+  const readToast = async () => (await bbFrame(target).evaluate(() =>
+    [...document.querySelectorAll('.ant-message, .ant-notification, .toast, .Toastify, [class*="error" i], [class*="alert" i]')]
+      .map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim()).filter(Boolean)).catch(() => []));
 
-  // Poll for a genuine acceptance signal; bail out fast if reCAPTCHA is blocked.
-  const SUCCESS = /request is being processed|showing (request|has been) (submitted|confirmed|booked|requested)|successfully|your showing/i;
-  for (let i = 0; i < 8; i++) {
+  await book.click({ timeout: 10000 });
+  for (let i = 0; i < 3 && !submitError; i++) {
+    await target.waitForTimeout(1500);
+    const toasts = await readToast();
+    const hit = toasts.find((t) => /logged out|log back in|error|failed|unable/i.test(t));
+    if (hit) submitError = hit;
+  }
+  if (submitError) {
+    target.off('requestfailed', onFail);
+    throw new Error(`Booking was REJECTED by BrokerBay at submit: "${submitError}". Nothing was booked.`);
+  }
+
+  // Poll for a genuine acceptance signal from BrokerBay (mirrors the wording of
+  // the "Showing Request" confirmation: "Your showing request is being processed.").
+  const SUCCESS = /request is being processed|please wait for further instruction|showing (request|has been) (submitted|confirmed|booked|requested)|your showing (request )?(has been|is)/i;
+  for (let i = 0; i < 10; i++) {
     await target.waitForTimeout(3000);
     const text = await bbFrame(target).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
     if (SUCCESS.test(text)) {
@@ -257,17 +295,15 @@ async function submitBooking(target) {
   }
   target.off('requestfailed', onFail);
 
-  if (captchaBlocked) {
+  if (captchaCoreFailed) {
     throw new Error(
-      'Booking did NOT go through — Google reCAPTCHA is blocked. BrokerBay needs the ' +
-      'domains www.google.com and www.gstatic.com to submit a showing; the form hangs ' +
-      'without them. Allowlist those domains in the network policy, start a NEW session, ' +
-      'then re-run with --confirm.'
+      'Booking did NOT go through — a core reCAPTCHA resource failed to load. BrokerBay needs ' +
+      'www.google.com and www.gstatic.com allowlisted to submit. Nothing was booked.'
     );
   }
   throw new Error(
-    'Booking did NOT complete — no confirmation appeared within the timeout and the form is ' +
-    'stuck in a submitting state. Nothing was booked. Check BrokerBay manually before retrying.'
+    'Booking did NOT complete — clicked "Book Showing" but no confirmation appeared within the ' +
+    'timeout. Nothing was booked. Check BrokerBay manually before retrying.'
   );
 }
 

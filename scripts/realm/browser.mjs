@@ -51,15 +51,30 @@ export async function launchRealmBrowser({ headless = true, storageState = null 
   const browser = await chromium.launch({
     executablePath: CHROME_PATH,
     headless,
-    args: ['--no-sandbox'],
+    // --disable-blink-features=AutomationControlled reduces automation
+    // fingerprinting (hides navigator.webdriver). NOTE: this alone did NOT clear
+    // BrokerBay's submit-time "You have been logged out" rejection in the remote
+    // headless environment — see submitBooking() in book.mjs.
+    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
     ...(PROXY_SERVER ? { proxy: { server: PROXY_SERVER } } : {}),
   });
 
   // ignoreHTTPSErrors is required because the proxy re-signs TLS with a CA
   // Chromium does not trust. NODE_EXTRA_CA_CERTS covers Node but not Chromium.
+  // A tall viewport keeps the whole BrokerBay booking form — including the sticky
+  // "Book Showing" submit button in the header — on-screen at once, so the submit
+  // can be clicked with a real (trusted) click without scrolling the slot list
+  // (which would re-render and de-select the chosen time).
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
+    viewport: { width: 1440, height: 1400 },
     ...(storageState ? { storageState } : {}),
+  });
+  // Playwright still sets navigator.webdriver=true; null it out before any page
+  // script runs to reduce automation fingerprinting. (Hardening only — it did not
+  // by itself clear BrokerBay's submit-time "logged out" rejection.)
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
   const page = await context.newPage();
 
