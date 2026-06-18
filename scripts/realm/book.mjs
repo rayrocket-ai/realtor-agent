@@ -25,6 +25,7 @@
 // need confirming against the live DOM.
 
 import { launchRealmBrowser, AUTH_URL } from './browser.mjs';
+import { getLatestOtp } from './otp_highlevel.mjs';
 
 function parseArgs(argv) {
   const out = { confirm: false };
@@ -62,6 +63,9 @@ async function login(page, { username, password }) {
   // Standard Keycloak login form selectors.
   await page.fill('#username, input[name="username"]', username);
   await page.fill('#password, input[name="password"]', password);
+  // Record the moment we submit, so OTP polling only accepts codes texted after
+  // this point (avoids reusing a stale code from a previous login).
+  const submittedAt = Date.now();
   await page.click('#kc-login, input[type="submit"], button[type="submit"]');
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(3000);
@@ -73,10 +77,23 @@ async function login(page, { username, password }) {
     throw new Error(`Keycloak rejected the login: ${msg.trim()}. Check REALM_USERNAME / REALM_PASSWORD.`);
   }
 
-  // MFA: Keycloak shows an OTP field. Unattended booking is impossible if so.
-  const mfa = await page.$('#otp, input[name="otp"], input[autocomplete="one-time-code"]');
-  if (mfa) {
-    throw new Error('Realm/Keycloak prompted for an MFA/2FA code. Unattended booking is not possible until this is resolved (see docs/integrations.md).');
+  // MFA: Keycloak shows an OTP field. Fetch the SMS code from HighLevel and enter it.
+  const otpSel = '#otp, input[name="otp"], input[autocomplete="one-time-code"]';
+  const otpField = await page.$(otpSel);
+  if (otpField) {
+    console.log('[realm] MFA prompt detected — fetching SMS code from HighLevel...');
+    const code = await getLatestOtp({ sinceMs: submittedAt, timeoutMs: 120000, pollMs: 5000 });
+    console.log('[realm] code received, submitting.');
+    await page.fill(otpSel, code);
+    await page.click('#kc-login, input[type="submit"], button[type="submit"]');
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+
+    const otpErr = await page.$('#input-error, .alert-error, .pf-c-alert__title, .kc-feedback-text');
+    if (otpErr) {
+      const msg = (await otpErr.innerText().catch(() => '')) || 'invalid code';
+      throw new Error(`Keycloak rejected the MFA code: ${msg.trim()}.`);
+    }
   }
 
   // Success = redirected off the SSO host back to the Realm app.

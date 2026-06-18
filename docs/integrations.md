@@ -27,15 +27,17 @@ Blocker status (verified 2026-06-17):
 1. ✅ **Credentials** — `REALM_USERNAME` / `REALM_PASSWORD` are set as environment variables. Never commit credentials to the repo or paste them into chat history.
 2. ✅ **Browser runtime** — Chromium + Playwright work through the environment's TLS-intercepting proxy (`browser.mjs` handles the proxy + cert wiring).
 3. ✅ **Realm app host** — `*.realmmlp.ca` is allowlisted (app shell + OIDC callback reachable).
-4. ⛔ **SSO login host blocked (gates LOGIN)** — `sso.ampre.ca` returns 403 (`X-Proxy-Error: blocked-by-allowlist`). The Keycloak login page can't load, so we can't even sign in. **Action:** allowlist `sso.ampre.ca`.
-5. ⛔ **App JS host blocked (gates the PORTAL/booking UI)** — the SPA loads from `collab-static.stratuscollab.com` (403). Needed after login to navigate the portal and submit a showing. **Action:** allowlist `collab-static.stratuscollab.com`.
+4. ⛔ **SSO login host not in egress allowlist (gates LOGIN)** — `sso.ampre.ca` returns 403 (`x-deny-reason: host_not_allowed`). The Keycloak login page can't load, so we can't sign in. **Action:** allowlist `sso.ampre.ca`.
+5. ⛔ **App JS host not in egress allowlist (gates the PORTAL/booking UI)** — the SPA loads from `collab-static.stratuscollab.com` (403). Needed after login to navigate the portal and submit a showing. **Action:** allowlist `collab-static.stratuscollab.com`.
 
-Both allowlist changes are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Likely also needed once logged in: `realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`. After changing the policy, re-run `node scripts/realm/check.mjs`.
+> **Egress changes need a NEW session.** The allowlist is baked into the container at startup; editing it does not affect a session that is already running (verified 2026-06-18 — hosts still 403 after the edit, `x-deny-reason: host_not_allowed`). Save the allowlist change, then start a fresh Claude Code session on this environment and re-run `node scripts/realm/check.mjs`.
 
-6. ⏳ **MFA/2FA** — unknown until the Keycloak form renders. `book.mjs` detects an OTP prompt and aborts (unattended booking is impossible if MFA is enforced; would need attended login or session reuse).
-7. ⏳ **Booking form mapping** — login selectors are standard Keycloak and already wired. The showing-request form (`submitShowing()` / `TODO(form-mapping)` in `book.mjs`) can only be finalised against the rendered portal, i.e. after blocker 5 clears.
+Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Required hosts: `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com` (HighLevel API, for MFA). Likely also needed once logged in: `realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`.
 
-Next step is the two allowlist changes (blockers 4 + 5); the script structure, proxy/cert handling, Keycloak login flow, MFA guard, and dry-run safety are already in place and tested.
+6. ⚙️ **MFA/2FA — SMS code via HighLevel (wired, untested)** — the account enforces SMS MFA. The number lives in HighLevel (GoHighLevel), so `scripts/realm/otp_highlevel.mjs` reads the code back via the LeadConnector v2 Conversations API and `book.mjs` enters it automatically — fully unattended. Needs env: `HIGHLEVEL_API_TOKEN` (Private Integration token, Conversations read scope) and `HIGHLEVEL_LOCATION_ID`, plus `services.leadconnectorhq.com` on the allowlist. Verify the fetcher in isolation with `node scripts/realm/otp_highlevel.mjs` (prints the latest code) before a full login; confirm the LeadConnector response shape on first run.
+7. ⏳ **Booking form mapping** — login + MFA selectors are wired. The showing-request form (`submitShowing()` / `TODO(form-mapping)` in `book.mjs`) can only be finalised against the rendered portal, i.e. after blocker 5 clears.
+
+Next step: save the allowlist (blockers 4 + 5 + HighLevel host), set the HighLevel env vars, start a new session, run `check.mjs`. The script structure, proxy/cert handling, Keycloak login, HighLevel OTP fetch, and dry-run safety are already in place.
 
 ### Interim behavior
 

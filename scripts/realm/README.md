@@ -30,14 +30,32 @@ back to `app.realmmlp.ca/auth/amp/callback`.
 - ✅ Chromium + Playwright work through the proxy.
 - ✅ Login flow mapped to Keycloak (selectors wired, no guessing needed).
 
-Two network-policy changes remain:
+Remaining (all on your side):
 
-- ⛔ `sso.ampre.ca` — Keycloak login host (403). **Gates login.**
-- ⛔ `collab-static.stratuscollab.com` — React SPA JS (403). **Gates the
-  portal/booking UI after login.**
+- ⛔ Egress allowlist — add `sso.ampre.ca` (login), `collab-static.stratuscollab.com`
+  (portal), and `services.leadconnectorhq.com` (HighLevel API for MFA). **Egress
+  changes only apply to a NEW session** — save them, then start a fresh session
+  and re-run `check.mjs`. Likely also: `realmlive-default-rtdb.firebaseio.com`,
+  `www.torontomls.net`.
+- ⚙️ HighLevel env vars for the SMS MFA code (see below).
 
-Likely also needed once logged in:
-`realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`.
+## MFA (SMS code via HighLevel)
+
+The account texts a login code to a number in HighLevel.
+`otp_highlevel.mjs` reads it back via the LeadConnector v2 API and `book.mjs`
+enters it automatically. Set in the environment:
+
+| Env var | What |
+|---|---|
+| `HIGHLEVEL_API_TOKEN` | HighLevel Private Integration token (Conversations read scope) |
+| `HIGHLEVEL_LOCATION_ID` | sub-account/location that owns the phone number |
+| `REALM_OTP_SENDER` | *(optional)* substring of the sending number/name to filter on |
+
+Verify the fetcher alone before a full login:
+
+```bash
+node scripts/realm/otp_highlevel.mjs   # prints the latest detectable SMS code
+```
 
 ## Running
 
@@ -55,9 +73,9 @@ node scripts/realm/book.mjs ... --confirm
 
 ## Remaining work once `check.mjs` is green
 
-1. **Verify the Keycloak login** — selectors are already wired (standard
-   Keycloak); confirm a clean sign-in and that no MFA is enforced for this
-   account. `book.mjs` aborts on an OTP prompt if it is.
+1. **Verify the Keycloak login + MFA** — login and the HighLevel OTP fetch are
+   wired; confirm a clean end-to-end sign-in (run `otp_highlevel.mjs` first to
+   prove the SMS read works, then a full `book.mjs` dry run).
 2. **Implement `submitShowing()`** in `book.mjs` — navigate to the listing and
    fill the real showing-request form (the `TODO(form-mapping)` marker).
    Capture the confirmation number.
