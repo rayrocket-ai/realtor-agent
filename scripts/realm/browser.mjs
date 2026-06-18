@@ -44,8 +44,10 @@ const CHROME_PATH =
  *
  * @param {object} [opts]
  * @param {boolean} [opts.headless=true]
+ * @param {string}  [opts.storageState]  path to a Playwright storageState JSON
+ *   (cookies + localStorage) to restore an authenticated session.
  */
-export async function launchRealmBrowser({ headless = true } = {}) {
+export async function launchRealmBrowser({ headless = true, storageState = null } = {}) {
   const browser = await chromium.launch({
     executablePath: CHROME_PATH,
     headless,
@@ -55,7 +57,10 @@ export async function launchRealmBrowser({ headless = true } = {}) {
 
   // ignoreHTTPSErrors is required because the proxy re-signs TLS with a CA
   // Chromium does not trust. NODE_EXTRA_CA_CERTS covers Node but not Chromium.
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    ...(storageState ? { storageState } : {}),
+  });
   const page = await context.newPage();
 
   return { browser, context, page };

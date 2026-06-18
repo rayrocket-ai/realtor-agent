@@ -20,28 +20,42 @@ https://sso.ampre.ca/realms/trreb/protocol/openid-connect/auth
   &redirect_uri=https://app.realmmlp.ca/auth/amp/callback
 ```
 
-The login form is **server-rendered Keycloak HTML** (standard `#username` / `#password` / `#kc-login` selectors) — it does NOT depend on the React SPA. So login automation only needs `sso.ampre.ca` reachable; `collab-static` is only needed for the portal/booking UI after login. `book.mjs` drives this directly via the OIDC auth URL.
+The login form is **server-rendered Keycloak HTML** (standard `#username` / `#password` / `#kc-login` selectors) — it does NOT depend on the React SPA. So login automation only needs `sso.ampre.ca` reachable; `collab-static` is only needed for the portal/booking UI after login. `login.mjs` drives this directly via the OIDC auth URL and is shared by `book.mjs` and the discovery tools.
 
-Blocker status (verified 2026-06-17):
+Blocker status (verified 2026-06-18 — full end-to-end test run):
 
 1. ✅ **Credentials** — `REALM_USERNAME` / `REALM_PASSWORD` are set as environment variables. Never commit credentials to the repo or paste them into chat history.
 2. ✅ **Browser runtime** — Chromium + Playwright work through the environment's TLS-intercepting proxy (`browser.mjs` handles the proxy + cert wiring).
 3. ✅ **Realm app host** — `*.realmmlp.ca` is allowlisted (app shell + OIDC callback reachable).
-4. ⛔ **SSO login host not in egress allowlist (gates LOGIN)** — `sso.ampre.ca` returns 403 (`x-deny-reason: host_not_allowed`). The Keycloak login page can't load, so we can't sign in. **Action:** allowlist `sso.ampre.ca`.
-5. ⛔ **App JS host not in egress allowlist (gates the PORTAL/booking UI)** — the SPA loads from `collab-static.stratuscollab.com` (403). Needed after login to navigate the portal and submit a showing. **Action:** allowlist `collab-static.stratuscollab.com`.
+4. ✅ **SSO login host** — `sso.ampre.ca` reachable; Keycloak login form renders and login succeeds.
+5. ✅ **App JS host** — `collab-static.stratuscollab.com` reachable; the React SPA (dashboard, search, listing pages) loads.
+6. ✅ **MFA/2FA — SMS code via HighLevel (verified working)** — the account enforces SMS MFA. The number lives in HighLevel (GoHighLevel); `scripts/realm/otp_highlevel.mjs` reads the code back via the LeadConnector v2 Conversations API and `login.mjs` enters it automatically — fully unattended. Confirmed end-to-end: login lands on the authenticated Realm dashboard. Env: `HIGHLEVEL_API_TOKEN` (Private Integration token, Conversations read scope), `HIGHLEVEL_LOCATION_ID`, `REALM_OTP_SENDER`; host `services.leadconnectorhq.com`.
+7. ⛔ **BrokerBay host not in egress allowlist (gates BOOKING)** — booking does NOT happen inside Realm. The listing page's **"Online Appt"** link hands off to **BrokerBay**, which is currently 403 (`Host not in allowlist`). **Action:** allowlist BrokerBay (`edge.brokerbay.com`, and the broader `*.brokerbay.com` to be safe). This is the only remaining blocker for end-to-end booking.
 
-> **Egress changes need a NEW session.** The allowlist is baked into the container at startup; editing it does not affect a session that is already running (verified 2026-06-18 — hosts still 403 after the edit, `x-deny-reason: host_not_allowed`). Save the allowlist change, then start a fresh Claude Code session on this environment and re-run `node scripts/realm/check.mjs`.
+> **Egress changes need a NEW session.** The allowlist is baked into the container at startup; editing it does not affect a session that is already running. Save the allowlist change, then start a fresh Claude Code session and re-test.
 
-Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Required hosts: `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com` (HighLevel API, for MFA). Likely also needed once logged in: `realmlive-default-rtdb.firebaseio.com`, `www.torontomls.net`.
+Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Currently required + working: `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com`. **Still needed: `*.brokerbay.com` (at minimum `edge.brokerbay.com`).**
 
-6. ⚙️ **MFA/2FA — SMS code via HighLevel (wired, untested)** — the account enforces SMS MFA. The number lives in HighLevel (GoHighLevel), so `scripts/realm/otp_highlevel.mjs` reads the code back via the LeadConnector v2 Conversations API and `book.mjs` enters it automatically — fully unattended. Needs env: `HIGHLEVEL_API_TOKEN` (Private Integration token, Conversations read scope) and `HIGHLEVEL_LOCATION_ID`, plus `services.leadconnectorhq.com` on the allowlist. Verify the fetcher in isolation with `node scripts/realm/otp_highlevel.mjs` (prints the latest code) before a full login; confirm the LeadConnector response shape on first run.
-7. ⏳ **Booking form mapping** — login + MFA selectors are wired. The showing-request form (`submitShowing()` / `TODO(form-mapping)` in `book.mjs`) can only be finalised against the rendered portal, i.e. after blocker 5 clears.
+### Search → listing → BrokerBay flow (mapped 2026-06-18)
 
-Next step: save the allowlist (blockers 4 + 5 + HighLevel host), set the HighLevel env vars, start a new session, run `check.mjs`. The script structure, proxy/cert handling, Keycloak login, HighLevel OTP fetch, and dry-run safety are already in place.
+1. **Search** is a button (`aria-label="Open search"`, "Search REALM") that opens an overlay with a text input (placeholder "try: street address, MLS#, client name…"). Typing + Enter navigates to `/s?...` results.
+2. **Results** list listing links: `a[href="/view/listings/TREB-<MLS>"]` with the address as text. (e.g. "85 Ronan Cres, Vaughan" → `TREB-N12851994`.)
+3. **Listing page** (`/view/listings/<id>?view=agent-full`) exposes the showing entry point as a link: **`Online Appt`** → `href="/redirect?key=online-appt&listingId=<id>"`.
+4. Clicking it opens a **new tab** → `app.realmmlp.ca/api/v1/treb/listings/links/onlineappt/<id>` → redirects to **`https://edge.brokerbay.com/external/treb/book.html`** (the BrokerBay booking UI). ← blocked here by egress.
+
+The listing page also carries the listing agent + brokerage (e.g. PAT PISANTI, Royal LePage Maximum Realty) and a Google Maps "Directions" link with the full geocodable address — useful for the routing/back-to-back feature.
+
+8. ⏳ **BrokerBay booking-form mapping** — cannot be done until blocker 7 clears (the page won't render). Once `*.brokerbay.com` is allowlisted: map the date picker / time-slot list / availability + confirm controls on `edge.brokerbay.com/external/treb/book.html`, then implement the booking + multi-listing routing.
+
+Next step: allowlist `*.brokerbay.com`, start a new session, re-run the "Online Appt" handoff to capture the live BrokerBay DOM, then build the booking flow.
 
 ### Interim behavior
 
-Until blocker 4 clears and the form is mapped, the `book-showing` skill outputs a paste-ready booking block and never claims a Realm booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
+Until blocker 7 clears and the BrokerBay form is mapped, the `book-showing` skill outputs a paste-ready booking block and never claims a Realm/BrokerBay booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
+
+### Discovery tooling
+
+`scripts/realm/login.mjs` is the shared, verified login (Keycloak + HighLevel MFA, optional `storageState` session reuse via `browser.mjs`). `scripts/realm/_capture.mjs` and `scripts/realm/_bb.mjs` are temporary DOM-mapping harnesses (search→listing, and the Online Appt→BrokerBay handoff) — they never submit anything and can be deleted once BrokerBay is mapped.
 
 ## Also available (not used yet)
 
