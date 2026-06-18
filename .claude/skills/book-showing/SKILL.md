@@ -31,7 +31,18 @@ Show the user one summary line — client, address, date, exact start–end time
 
 ## Execute (in this order)
 
-1. **Realm booking** — Realm automation is scaffolded in `scripts/realm/` but still gated on two network-policy changes (see `docs/integrations.md`: `sso.ampre.ca` is blocked so the Keycloak login can't load, and `collab-static.stratuscollab.com` is blocked so the portal can't render). Until those clear, output a "Realm booking block" the user can paste in:
+1. **Realm/BrokerBay booking** — the showing is placed in BrokerBay (the Realm listing's "Online Appt" handoff) via `scripts/realm/book.mjs`. Login (Keycloak SSO + HighLevel SMS MFA) and the BrokerBay booking form are mapped and working (see `docs/integrations.md` §8–9).
+
+   - First confirm connectivity: `node scripts/realm/check.mjs` must report **UNBLOCKED** (it needs a session where `app.launchdarkly.com` + `ws-us2.pusher.com` are allowlisted). If it reports BLOCKED, fall back to the paste-ready block below and do **not** claim a booking was placed.
+   - **Dry run first** (fills the form, never submits) to verify the slot is available:
+
+     ```
+     node scripts/realm/book.mjs --mls <MLS#> --date <YYYY-MM-DD> \
+       --start "<H:MM AM/PM>" --end "<H:MM AM/PM>" --client "<name>"
+     ```
+
+     Pass `--listing TREB-<MLS#>` to skip address lookup, `--mls`/`--address` otherwise. Duration is derived from start/end (BrokerBay allows 15 or 30 min). Only after the user confirms, re-run with `--confirm` to place it, and record the confirmation/reference it prints. Never claim a booking was placed unless `book.mjs` reported one back.
+   - If the listing isn't bookable online or `check.mjs` is BLOCKED, emit the paste-ready fallback block instead:
 
    ```
    Property: <address> (ID: <property id>)
@@ -39,8 +50,6 @@ Show the user one summary line — client, address, date, exact start–end time
    Client: <buyer name, phone/email>
    Listing agent: <name, contact from Agents table>
    ```
-
-   Never state or imply the Realm booking was placed. Once `node scripts/realm/check.mjs` reports UNBLOCKED and the form selectors are mapped, replace this step with a call to `scripts/realm/book.mjs --confirm` and record the confirmation number it returns.
 
 2. **Calendar event** — create on the "Real Estate" calendar: title `Showing — <address> (<client name>)`, correct start/end, description containing client contact info, Property ID, and listing agent contact.
 

@@ -10,8 +10,10 @@ with Playwright.
 | File | What it does |
 |---|---|
 | `browser.mjs` | Shared Chromium launcher. Wires up the environment's TLS-intercepting proxy + cert so Chromium can reach `app.realmmlp.ca`. |
+| `login.mjs` | Shared, verified login (Keycloak SSO + HighLevel SMS MFA), with optional `storageState` session reuse. Used by `book.mjs`. |
+| `otp_highlevel.mjs` | Reads the SMS MFA code back from HighLevel (LeadConnector v2 API). |
 | `check.mjs` | Connectivity diagnostic. Probes every host the SPA needs and reports whether the login form actually renders. **Run this first.** |
-| `book.mjs` | Signs in and submits a showing request. Dry-run by default. |
+| `book.mjs` | Signs in, follows the listing's "Online Appt" handoff into BrokerBay, fills the booking form, and submits. **Dry-run by default; only `--confirm` places the booking.** |
 
 ## Login flow
 
@@ -23,28 +25,22 @@ back to `app.realmmlp.ca/auth/amp/callback`.
 
 ## Current status (verified 2026-06-18)
 
-**Login is UNBLOCKED end-to-end** (Keycloak SSO + HighLevel SMS MFA, fully
-unattended). The BrokerBay handoff now lands too, but the BrokerBay booking
-view is still gated on two egress hosts — `check.mjs` exits 1 until they clear.
-
-Cleared:
+**Working end-to-end** — login through to a filled BrokerBay booking form, in a
+single unattended run. `check.mjs` exits 0.
 
 - ✅ `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`,
-  `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`
-  all allowlisted.
+  `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`,
+  `app.launchdarkly.com`, `ws-us2.pusher.com` all allowlisted.
 - ✅ `REALM_USERNAME` / `REALM_PASSWORD` + HighLevel MFA env vars set.
 - ✅ Chromium + Playwright work through the proxy.
 - ✅ Login mapped to Keycloak; SMS MFA read back via HighLevel; lands on dashboard.
 - ✅ Search → listing → "Online Appt" → BrokerBay handoff reaches `edge.brokerbay.com`.
+- ✅ BrokerBay booking view renders (LaunchDarkly flags + Pusher availability
+  socket both connect); date / time-slot / duration form mapped and driven by
+  `book.mjs`.
 
-Remaining (egress, on your side):
-
-- ⛔ Allowlist `app.launchdarkly.com` (feature flags — gates the BrokerBay
-  booking render; the page hangs on a spinner without it) and `ws-us2.pusher.com`
-  (realtime slot availability). **Egress changes only apply to a NEW session** —
-  save them, start a fresh session, then run `node scripts/realm/_bb2.mjs` to
-  confirm the booking view renders. See `docs/integrations.md` §8 for the full
-  network trace and the list of cosmetic hosts that are safe to leave blocked.
+See `docs/integrations.md` §8–9 for the full network trace, the booking-form DOM
+map, and the list of cosmetic hosts that are safe to leave blocked.
 
 ## MFA (SMS code via HighLevel)
 
@@ -70,24 +66,22 @@ node scripts/realm/otp_highlevel.mjs   # prints the latest detectable SMS code
 # 1. Verify connectivity (exit 0 = unblocked, exit 1 = something is blocked)
 node scripts/realm/check.mjs
 
-# 2. Dry run (logs in, fills the form, DOES NOT submit)
-node scripts/realm/book.mjs --address "123 Main St, Toronto" --mls W1234567 \
-  --date 2026-06-20 --start 14:00 --end 14:30 --client "Sarah Chen"
+# 2. Dry run (logs in, follows the BrokerBay handoff, fills the form, DOES NOT submit)
+node scripts/realm/book.mjs --mls N12851994 \
+  --date 2026-06-20 --start "2:00 PM" --end "2:30 PM" --client "Sarah Chen"
+#    --listing TREB-N12851994   use a known listing id and skip lookup
+#    --address "85 Ronan Cres"  resolve the listing by searching Realm
+#    --type "Buyer Visit"       override the default Buyer/Broker showing type
+#    --note "..."               attach a note to the request
+# Start/end accept "2:00 PM" or 24h "14:00"; duration is derived (15 or 30 min).
+# A screenshot of the filled form lands at /tmp/realm-booking-filled.png.
 
-# 3. Real submission — only once the form is mapped and you mean it
-node scripts/realm/book.mjs ... --confirm
+# 3. Real submission — clicks "Book Showing" and reads back the confirmation
+node scripts/realm/book.mjs --mls N12851994 --date 2026-06-20 \
+  --start "2:00 PM" --end "2:30 PM" --client "Sarah Chen" --confirm
 ```
 
-## Remaining work once `check.mjs` is green
-
-1. **Verify the Keycloak login + MFA** — login and the HighLevel OTP fetch are
-   wired; confirm a clean end-to-end sign-in (run `otp_highlevel.mjs` first to
-   prove the SMS read works, then a full `book.mjs` dry run).
-2. **Implement `submitShowing()`** in `book.mjs` — navigate to the listing and
-   fill the real showing-request form (the `TODO(form-mapping)` marker).
-   Capture the confirmation number.
-3. **Wire into the skill** — replace step 1 of `.claude/skills/book-showing/SKILL.md`
-   with a call to `book.mjs --confirm` and record the returned confirmation.
-
-Until then the skill keeps emitting the paste-ready Realm block and never claims
-a booking was placed.
+The flow and selectors are mapped (see `docs/integrations.md` §8–9). `book.mjs`
+aborts loudly if login/MFA fails, the booking view never renders, or the
+requested slot isn't offered/available, and never prints a confirmation it
+didn't read back from BrokerBay.

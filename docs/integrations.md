@@ -6,7 +6,7 @@
 - **Google Calendar** — read/write. Showings calendar: "Real Estate" (`ehjgv5aqlbh60bbp4g502gkid4@group.calendar.google.com`).
 - **Gmail** — drafts only by policy; the user reviews and sends.
 
-## Realm — REQUIRED, automation scaffolded, one network blocker left
+## Realm — REQUIRED, automation working end-to-end
 
 **Confirmed platform:** Realm by PropTx — member sign-in at https://app.realmmlp.ca/signin (TRREB/PropTx MLS system). Realm has no public booking API, so the integration path is browser automation against the member portal. The Playwright harness lives in `scripts/realm/` (see its README). Run `node scripts/realm/check.mjs` for live connectivity status.
 
@@ -22,7 +22,7 @@ https://sso.ampre.ca/realms/trreb/protocol/openid-connect/auth
 
 The login form is **server-rendered Keycloak HTML** (standard `#username` / `#password` / `#kc-login` selectors) — it does NOT depend on the React SPA. So login automation only needs `sso.ampre.ca` reachable; `collab-static` is only needed for the portal/booking UI after login. `login.mjs` drives this directly via the OIDC auth URL and is shared by `book.mjs` and the discovery tools.
 
-Blocker status (verified 2026-06-18 — full end-to-end test run):
+Status (verified 2026-06-18 — full end-to-end test run, login → BrokerBay booking form filled):
 
 1. ✅ **Credentials** — `REALM_USERNAME` / `REALM_PASSWORD` are set as environment variables. Never commit credentials to the repo or paste them into chat history.
 2. ✅ **Browser runtime** — Chromium + Playwright work through the environment's TLS-intercepting proxy (`browser.mjs` handles the proxy + cert wiring).
@@ -31,17 +31,13 @@ Blocker status (verified 2026-06-18 — full end-to-end test run):
 5. ✅ **App JS host** — `collab-static.stratuscollab.com` reachable; the React SPA (dashboard, search, listing pages) loads.
 6. ✅ **MFA/2FA — SMS code via HighLevel (verified working)** — the account enforces SMS MFA. The number lives in HighLevel (GoHighLevel); `scripts/realm/otp_highlevel.mjs` reads the code back via the LeadConnector v2 Conversations API and `login.mjs` enters it automatically — fully unattended. Confirmed end-to-end: login lands on the authenticated Realm dashboard. Env: `HIGHLEVEL_API_TOKEN` (Private Integration token, Conversations read scope), `HIGHLEVEL_LOCATION_ID`, `REALM_OTP_SENDER`; host `services.leadconnectorhq.com`.
 7. ✅ **BrokerBay host allowlisted** — booking does NOT happen inside Realm. The listing page's **"Online Appt"** link hands off to **BrokerBay**. `*.brokerbay.com` is now allowlisted; the "Online Appt" handoff reaches `edge.brokerbay.com` and the BrokerBay shell loads (verified 2026-06-18, fresh session, live end-to-end run).
-8. ⛔ **BrokerBay booking SPA renders only a spinner — two functional dependencies still blocked (gates BOOKING).** The BrokerBay app shell and its JS bundles load, but the booking view never mounts: it polls feature flags and opens a realtime socket at bootstrap, both of which are egress-blocked. Console confirms it directly: `[FeatureFlagClient]: Error fetching flag settings: network error` and `WebSocket connection to 'wss://ws-us2.pusher.com/...' failed: ... 403`. **Action — allowlist both:**
-   - `app.launchdarkly.com` — BrokerBay polls LaunchDarkly feature flags at startup; the spinner hangs until this resolves. (SDK is in polling mode, so only this host is needed — not the streaming/events hosts.)
-   - `ws-us2.pusher.com` (or broadly `*.pusher.com`) — realtime channel for live slot availability.
-
-   Already reachable and working for booking: `edge.brokerbay.com` (app shell + booking API) and `storage.googleapis.com` (BrokerBay's `brokerbay-app-static-prod` JS bundles — its bucket root answers 403 by design, but bundle fetches succeed).
+8. ✅ **BrokerBay booking SPA renders — LaunchDarkly + Pusher cleared (verified 2026-06-18, fresh session).** The two functional dependencies that used to hang the spinner are now allowlisted and working: `app.launchdarkly.com` returns 200 ("LaunchDarkly client initialized") and the Pusher availability socket connects (`wss://ws-us2.pusher.com/app/...`). The booking view mounts fully — profile, date picker, and live time-slot availability all render. Already reachable and working: `edge.brokerbay.com` (app shell + booking API) and `storage.googleapis.com` (BrokerBay's `brokerbay-app-static-prod` JS bundles — bucket root answers 403 by design, but bundle fetches succeed).
 
    **Safe to ignore** (cosmetic / telemetry only, all blocked but non-essential): `js-agent.newrelic.com`, `sentry.io`, `s.go-mpulse.net`, `www.google-analytics.com`, `www.googletagmanager.com`, `static.zdassets.com` (Zendesk), `fast.appcues.com`, `cdn.roomvo.com`, `code.listtrac.com`, `cdnjs.cloudflare.com` (font-awesome icons + rollbar), `js.stripe.com` (no payment in a showing booking), and listing-photo CDNs (`live-images.stratuscollab.com`, `photos.v3.torontomls.net`).
 
 > **Egress changes need a NEW session.** The allowlist is baked into the container at startup; editing it does not affect a session that is already running. Save the allowlist change, then start a fresh Claude Code session and re-test.
 
-Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Currently required + working: `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`. **Still needed for booking: `app.launchdarkly.com` and `ws-us2.pusher.com`.**
+Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Required + working for the full booking flow: `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`, `app.launchdarkly.com`, `ws-us2.pusher.com`. All other hosts the SPA touches are cosmetic/telemetry (see list above) and safe to leave blocked.
 
 ### Search → listing → BrokerBay flow (mapped 2026-06-18)
 
@@ -52,17 +48,21 @@ Allowlist edits are in Claude Code on the web → environment network policy (ht
 
 The listing page also carries the listing agent + brokerage (e.g. PAT PISANTI, Royal LePage Maximum Realty) and a Google Maps "Directions" link with the full geocodable address — useful for the routing/back-to-back feature.
 
-9. ⏳ **BrokerBay booking-form mapping** — cannot be done until blocker 8 clears (the booking view won't render past the spinner). Once `app.launchdarkly.com` + `ws-us2.pusher.com` are allowlisted: map the date picker / time-slot list / availability + confirm controls on `edge.brokerbay.com/dashboard/#/.../appointments/book`, then implement the booking + multi-listing routing.
+9. ✅ **BrokerBay booking form mapped + implemented (verified 2026-06-18).** The booking view at `edge.brokerbay.com/dashboard/#/rets/v3--<token>/appointments/book` is a three-step form, now driven by `scripts/realm/book.mjs`:
+   - **Step 1 – Profile:** pre-filled from the logged-in agent (name, brokerage, email). `select[name="showingType"]` chooses the visit type (default `Buyer/Broker`); an "Add Note" button reveals a note `textarea`.
+   - **Step 2 – Date:** `.datepicker-booking` calendar; days are `.datenumber` inside `.datecontainer` (past days carry `.no-hover`, the selected day's number carries `.day-selected`). Month is navigated with the `‹ ›` chevrons in the header.
+   - **Step 3 – Time:** 15-minute `.timeslot` divs whose class encodes availability — plain `.timeslot` is bookable, `.timeslot-unavailable` is taken/blocked, `.timeslot-p` is in the past. Selecting a slot marks it `.timeslot-selected` and reveals a **Duration** radio (`input[name="duration"]`, values `15`/`30`, capped per listing) plus a **Done** button.
+   - **Submit:** the `Book Showing` button (`button.ant-btn`, text "Book Showing") becomes enabled once date + slot + duration are set. `book.mjs` clicks it only with `--confirm` and reads back the result.
 
-Next step: allowlist `app.launchdarkly.com` and `ws-us2.pusher.com`, start a new session, re-run `node scripts/realm/_bb2.mjs` to confirm the booking view renders (and capture its live DOM), then build the booking flow.
+   `book.mjs` resolves the listing (`--listing`, `--mls` → `TREB-<MLS#>`, or `--address` via Realm search), opens the Online Appt handoff, fills the form, and is dry-run by default. Live slot availability comes over the Pusher socket, so it doubles as the real-time conflict check on the listing side.
 
-### Interim behavior
+### Behavior
 
-Until blocker 7 clears and the BrokerBay form is mapped, the `book-showing` skill outputs a paste-ready booking block and never claims a Realm/BrokerBay booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
+The `book-showing` skill now places the showing through `book.mjs` (dry-run → confirm) when `check.mjs` is UNBLOCKED, and records the confirmation it reads back. If the listing isn't bookable online or a session is BLOCKED, it falls back to the paste-ready booking block and never claims a booking was made. Everything else (lookup, conflict check, calendar, CRM, email draft) runs for real.
 
 ### Discovery tooling
 
-`scripts/realm/login.mjs` is the shared, verified login (Keycloak + HighLevel MFA, optional `storageState` session reuse via `browser.mjs`). `scripts/realm/_capture.mjs`, `scripts/realm/_bb.mjs`, and `scripts/realm/_bb2.mjs` are temporary DOM-mapping harnesses (search→listing, the Online Appt→BrokerBay handoff, and the handoff + full network/console trace) — they never submit anything and can be deleted once BrokerBay is mapped. `_bb2.mjs` is the one to re-run after the LaunchDarkly/Pusher allowlist change: it logs every host the booking SPA touches and flags which are blocked.
+`scripts/realm/login.mjs` is the shared, verified login (Keycloak + HighLevel MFA, optional `storageState` session reuse via `browser.mjs`). The BrokerBay flow is now mapped and lives in `book.mjs`; the temporary DOM-mapping harnesses (`_capture.mjs`, `_bb*.mjs`) have been removed. To re-capture the live DOM if BrokerBay changes, drive `login.mjs` + the Online Appt handoff and dump the booking frame.
 
 ## Also available (not used yet)
 
