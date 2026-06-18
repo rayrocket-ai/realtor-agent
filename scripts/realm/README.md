@@ -49,7 +49,7 @@ enters it automatically. Set in the environment:
 |---|---|
 | `HIGHLEVEL_API_TOKEN` | HighLevel Private Integration token (Conversations read scope) |
 | `HIGHLEVEL_LOCATION_ID` | sub-account/location that owns the phone number |
-| `REALM_OTP_SENDER` | *(optional)* substring of the sending number/name to filter on |
+| `REALM_OTP_SENDER` | *(optional)* the number the code texts from — any format works (`+1...`, `1...`, dashes/spaces; digits are normalized), or an alphanumeric sender ID like `Realm` |
 
 Verify the fetcher alone before a full login:
 

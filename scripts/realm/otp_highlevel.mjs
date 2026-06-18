@@ -68,7 +68,9 @@ async function recentInboundSms(limit = 5) {
         out.push({
           body: m.body || '',
           ts: new Date(m.dateAdded || m.dateUpdated || c.lastMessageDate || 0).getTime(),
-          sender: c.contactName || c.fullName || c.phone || '',
+          // All identifying fields for the sender, so the REALM_OTP_SENDER filter
+          // can match a phone number (any format) or an alphanumeric sender ID.
+          sender: [c.contactName, c.fullName, c.phone, m.from].filter(Boolean).join(' '),
         });
       }
     }
@@ -80,6 +82,19 @@ async function recentInboundSms(limit = 5) {
 function extractCode(body) {
   const m = body.match(OTP_REGEX);
   return m ? m[1] : null;
+}
+
+// Does this message's sender match REALM_OTP_SENDER? Format-agnostic: if the
+// filter contains enough digits, compare digits-only (so "+1 234-567-8900",
+// "12345678900", and "2345678900" all match). Otherwise fall back to a
+// case-insensitive text match (for alphanumeric sender IDs like "Realm").
+function senderMatches(sender, filter) {
+  if (!filter) return true;
+  const filterDigits = filter.replace(/\D/g, '');
+  if (filterDigits.length >= 4) {
+    return sender.replace(/\D/g, '').includes(filterDigits);
+  }
+  return sender.toLowerCase().includes(filter.toLowerCase());
 }
 
 /**
@@ -97,7 +112,7 @@ export async function getLatestOtp({ sinceMs = 0, timeoutMs = 120000, pollMs = 5
     const msgs = await recentInboundSms().catch((e) => { throw e; });
     for (const m of msgs) {
       if (m.ts < sinceMs) continue;
-      if (sender && !`${m.sender}`.includes(sender)) continue;
+      if (!senderMatches(m.sender, sender)) continue;
       const code = extractCode(m.body);
       if (code) return code;
     }
