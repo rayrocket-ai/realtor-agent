@@ -27,13 +27,35 @@ const HOSTS = [
   { url: 'https://www.torontomls.net', required: false, note: 'TRREB MLS' },
 ];
 
+// Booking happens in BrokerBay, after the Realm "Online Appt" handoff. These
+// hosts gate whether the BrokerBay booking SPA actually RENDERS (it shows only
+// a spinner until they're reachable). `booking: true` = needed to book.
+//   - edge.brokerbay.com       — BrokerBay app shell + booking API
+//   - storage.googleapis.com   — BrokerBay's JS bundles (brokerbay-app-static-prod)
+//   - app.launchdarkly.com     — feature flags polled at bootstrap; spinner hangs without them
+//   - ws-us2.pusher.com        — realtime channel for live slot availability (WebSocket)
+const BOOKING_HOSTS = [
+  { url: 'https://edge.brokerbay.com/', booking: true, note: 'BrokerBay app shell + booking API' },
+  { url: 'https://storage.googleapis.com/brokerbay-app-static-prod/', booking: true, note: 'BrokerBay JS bundles' },
+  { url: 'https://app.launchdarkly.com/sdk/evalx/611e55f0f793b82690974a02/contexts/eyJrZXkiOiJicm9rZXJiYXktYXBwIn0', booking: true, note: 'feature flags (gates render — spinner hangs without)' },
+  { url: 'https://ws-us2.pusher.com/', booking: true, note: 'realtime slot availability (WebSocket)' },
+];
+
+// The egress proxy rejects un-allowlisted hosts with a body that starts
+// "Host not in allowlist". That's the only reliable block signal — a host can
+// be reachable and still answer 403 at the app level (e.g. a GCS bucket root).
+const PROXY_BLOCK_MARKER = 'Host not in allowlist';
+
 async function probe(url) {
   // Use a throwaway Chromium request context so probing goes through the same
   // proxy + cert path the real automation uses.
   const { browser, context } = await launchRealmBrowser();
   try {
     const res = await context.request.get(url, { timeout: 15000, ignoreHTTPSErrors: true }).catch((e) => ({ err: e.message }));
-    return res.err ? `ERR ${res.err.split('\n')[0]}` : String(res.status());
+    if (res.err) return { label: `ERR ${res.err.split('\n')[0]}`, blocked: true };
+    const body = await res.text().catch(() => '');
+    const blocked = body.startsWith(PROXY_BLOCK_MARKER);
+    return { label: String(res.status()), blocked };
   } finally {
     await browser.close();
   }
@@ -64,11 +86,21 @@ async function renderCheck() {
   console.log('Direct host probes:');
   let requiredBlocked = false;
   for (const h of HOSTS) {
-    const status = await probe(h.url);
-    const ok = /^(2|3)\d\d$/.test(status);
-    if (!ok && h.required) requiredBlocked = true;
-    const flag = ok ? 'OK    ' : (h.required ? 'BLOCK!' : 'block ');
-    console.log(`  ${flag} ${status.padEnd(6)} ${h.note.padEnd(38)} ${h.url.replace(/^https:\/\//, '')}`);
+    const { label, blocked } = await probe(h.url);
+    if (blocked && h.required) requiredBlocked = true;
+    const flag = !blocked ? 'OK    ' : (h.required ? 'BLOCK!' : 'block ');
+    console.log(`  ${flag} ${label.padEnd(6)} ${h.note.padEnd(38)} ${h.url.replace(/^https:\/\//, '')}`);
+  }
+
+  console.log('\nBooking stage (BrokerBay) host probes:');
+  let bookingBlocked = false;
+  for (const h of BOOKING_HOSTS) {
+    // Reachable means the proxy let it through; an app-level 4xx (Pusher's 4xx,
+    // a GCS bucket-root 403) still counts as reachable.
+    const { label, blocked } = await probe(h.url);
+    if (blocked) bookingBlocked = true;
+    const flag = blocked ? 'BLOCK!' : 'OK    ';
+    console.log(`  ${flag} ${label.padEnd(6)} ${h.note.padEnd(48)} ${h.url.replace(/^https:\/\//, '').split('/')[0]}`);
   }
 
   console.log('\nKeycloak login form render check:');
@@ -76,7 +108,8 @@ async function renderCheck() {
   console.log(`  login form rendered: ${r.rendered ? 'YES' : 'NO'}  (username=${r.hasUser}, password=${r.hasPass})`);
   if (r.failedHosts.length) console.log(`  blocked while loading: ${r.failedHosts.join(', ')}`);
 
-  const unblocked = r.rendered && !requiredBlocked;
-  console.log(`\nVerdict: ${unblocked ? 'Realm login is UNBLOCKED — you can run book.mjs.' : 'Still blocked — see BLOCK! rows above. Allowlist those hosts in the environment network policy.'}`);
-  process.exit(unblocked ? 0 : 1);
+  const loginUnblocked = r.rendered && !requiredBlocked;
+  console.log(`\nLogin: ${loginUnblocked ? 'UNBLOCKED — you can run book.mjs.' : 'BLOCKED — see BLOCK! rows above.'}`);
+  console.log(`Booking (BrokerBay): ${bookingBlocked ? 'BLOCKED — allowlist the BLOCK! booking hosts above, then start a NEW session.' : 'all required hosts reachable.'}`);
+  process.exit(loginUnblocked && !bookingBlocked ? 0 : 1);
 })();

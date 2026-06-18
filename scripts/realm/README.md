@@ -21,23 +21,30 @@ with Playwright.
 `#username` / `#password` / `#kc-login` fields. On success Keycloak redirects
 back to `app.realmmlp.ca/auth/amp/callback`.
 
-## Current status (verified 2026-06-17)
+## Current status (verified 2026-06-18)
 
-`check.mjs` says **BLOCKED**. Cleared:
+**Login is UNBLOCKED end-to-end** (Keycloak SSO + HighLevel SMS MFA, fully
+unattended). The BrokerBay handoff now lands too, but the BrokerBay booking
+view is still gated on two egress hosts — `check.mjs` exits 1 until they clear.
 
-- ✅ `*.realmmlp.ca` allowlisted (app shell + OIDC callback reachable).
-- ✅ `REALM_USERNAME` / `REALM_PASSWORD` set in the environment.
+Cleared:
+
+- ✅ `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`,
+  `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`
+  all allowlisted.
+- ✅ `REALM_USERNAME` / `REALM_PASSWORD` + HighLevel MFA env vars set.
 - ✅ Chromium + Playwright work through the proxy.
-- ✅ Login flow mapped to Keycloak (selectors wired, no guessing needed).
+- ✅ Login mapped to Keycloak; SMS MFA read back via HighLevel; lands on dashboard.
+- ✅ Search → listing → "Online Appt" → BrokerBay handoff reaches `edge.brokerbay.com`.
 
-Remaining (all on your side):
+Remaining (egress, on your side):
 
-- ⛔ Egress allowlist — add `sso.ampre.ca` (login), `collab-static.stratuscollab.com`
-  (portal), and `services.leadconnectorhq.com` (HighLevel API for MFA). **Egress
-  changes only apply to a NEW session** — save them, then start a fresh session
-  and re-run `check.mjs`. Likely also: `realmlive-default-rtdb.firebaseio.com`,
-  `www.torontomls.net`.
-- ⚙️ HighLevel env vars for the SMS MFA code (see below).
+- ⛔ Allowlist `app.launchdarkly.com` (feature flags — gates the BrokerBay
+  booking render; the page hangs on a spinner without it) and `ws-us2.pusher.com`
+  (realtime slot availability). **Egress changes only apply to a NEW session** —
+  save them, start a fresh session, then run `node scripts/realm/_bb2.mjs` to
+  confirm the booking view renders. See `docs/integrations.md` §8 for the full
+  network trace and the list of cosmetic hosts that are safe to leave blocked.
 
 ## MFA (SMS code via HighLevel)
 

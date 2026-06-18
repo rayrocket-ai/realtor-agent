@@ -30,24 +30,31 @@ Blocker status (verified 2026-06-18 — full end-to-end test run):
 4. ✅ **SSO login host** — `sso.ampre.ca` reachable; Keycloak login form renders and login succeeds.
 5. ✅ **App JS host** — `collab-static.stratuscollab.com` reachable; the React SPA (dashboard, search, listing pages) loads.
 6. ✅ **MFA/2FA — SMS code via HighLevel (verified working)** — the account enforces SMS MFA. The number lives in HighLevel (GoHighLevel); `scripts/realm/otp_highlevel.mjs` reads the code back via the LeadConnector v2 Conversations API and `login.mjs` enters it automatically — fully unattended. Confirmed end-to-end: login lands on the authenticated Realm dashboard. Env: `HIGHLEVEL_API_TOKEN` (Private Integration token, Conversations read scope), `HIGHLEVEL_LOCATION_ID`, `REALM_OTP_SENDER`; host `services.leadconnectorhq.com`.
-7. ⛔ **BrokerBay host not in egress allowlist (gates BOOKING)** — booking does NOT happen inside Realm. The listing page's **"Online Appt"** link hands off to **BrokerBay**, which is currently 403 (`Host not in allowlist`). **Action:** allowlist BrokerBay (`edge.brokerbay.com`, and the broader `*.brokerbay.com` to be safe). This is the only remaining blocker for end-to-end booking.
+7. ✅ **BrokerBay host allowlisted** — booking does NOT happen inside Realm. The listing page's **"Online Appt"** link hands off to **BrokerBay**. `*.brokerbay.com` is now allowlisted; the "Online Appt" handoff reaches `edge.brokerbay.com` and the BrokerBay shell loads (verified 2026-06-18, fresh session, live end-to-end run).
+8. ⛔ **BrokerBay booking SPA renders only a spinner — two functional dependencies still blocked (gates BOOKING).** The BrokerBay app shell and its JS bundles load, but the booking view never mounts: it polls feature flags and opens a realtime socket at bootstrap, both of which are egress-blocked. Console confirms it directly: `[FeatureFlagClient]: Error fetching flag settings: network error` and `WebSocket connection to 'wss://ws-us2.pusher.com/...' failed: ... 403`. **Action — allowlist both:**
+   - `app.launchdarkly.com` — BrokerBay polls LaunchDarkly feature flags at startup; the spinner hangs until this resolves. (SDK is in polling mode, so only this host is needed — not the streaming/events hosts.)
+   - `ws-us2.pusher.com` (or broadly `*.pusher.com`) — realtime channel for live slot availability.
+
+   Already reachable and working for booking: `edge.brokerbay.com` (app shell + booking API) and `storage.googleapis.com` (BrokerBay's `brokerbay-app-static-prod` JS bundles — its bucket root answers 403 by design, but bundle fetches succeed).
+
+   **Safe to ignore** (cosmetic / telemetry only, all blocked but non-essential): `js-agent.newrelic.com`, `sentry.io`, `s.go-mpulse.net`, `www.google-analytics.com`, `www.googletagmanager.com`, `static.zdassets.com` (Zendesk), `fast.appcues.com`, `cdn.roomvo.com`, `code.listtrac.com`, `cdnjs.cloudflare.com` (font-awesome icons + rollbar), `js.stripe.com` (no payment in a showing booking), and listing-photo CDNs (`live-images.stratuscollab.com`, `photos.v3.torontomls.net`).
 
 > **Egress changes need a NEW session.** The allowlist is baked into the container at startup; editing it does not affect a session that is already running. Save the allowlist change, then start a fresh Claude Code session and re-test.
 
-Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Currently required + working: `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com`. **Still needed: `*.brokerbay.com` (at minimum `edge.brokerbay.com`).**
+Allowlist edits are in Claude Code on the web → environment network policy (https://code.claude.com/docs/en/claude-code-on-the-web). Currently required + working: `*.realmmlp.ca`, `sso.ampre.ca`, `collab-static.stratuscollab.com`, `services.leadconnectorhq.com`, `*.brokerbay.com`, `storage.googleapis.com`. **Still needed for booking: `app.launchdarkly.com` and `ws-us2.pusher.com`.**
 
 ### Search → listing → BrokerBay flow (mapped 2026-06-18)
 
 1. **Search** is a button (`aria-label="Open search"`, "Search REALM") that opens an overlay with a text input (placeholder "try: street address, MLS#, client name…"). Typing + Enter navigates to `/s?...` results.
 2. **Results** list listing links: `a[href="/view/listings/TREB-<MLS>"]` with the address as text. (e.g. "85 Ronan Cres, Vaughan" → `TREB-N12851994`.)
 3. **Listing page** (`/view/listings/<id>?view=agent-full`) exposes the showing entry point as a link: **`Online Appt`** → `href="/redirect?key=online-appt&listingId=<id>"`.
-4. Clicking it opens a **new tab** → `app.realmmlp.ca/api/v1/treb/listings/links/onlineappt/<id>` → redirects to **`https://edge.brokerbay.com/external/treb/book.html`** (the BrokerBay booking UI). ← blocked here by egress.
+4. Clicking it opens a **new tab** → `app.realmmlp.ca/api/v1/treb/listings/links/onlineappt/<id>` → redirects into the BrokerBay booking SPA at **`edge.brokerbay.com/dashboard/#/rets/v3--<token>/appointments/book`**. The handoff now lands (host allowlisted); the booking view is gated on the LaunchDarkly/Pusher blockers in §8 above.
 
 The listing page also carries the listing agent + brokerage (e.g. PAT PISANTI, Royal LePage Maximum Realty) and a Google Maps "Directions" link with the full geocodable address — useful for the routing/back-to-back feature.
 
-8. ⏳ **BrokerBay booking-form mapping** — cannot be done until blocker 7 clears (the page won't render). Once `*.brokerbay.com` is allowlisted: map the date picker / time-slot list / availability + confirm controls on `edge.brokerbay.com/external/treb/book.html`, then implement the booking + multi-listing routing.
+9. ⏳ **BrokerBay booking-form mapping** — cannot be done until blocker 8 clears (the booking view won't render past the spinner). Once `app.launchdarkly.com` + `ws-us2.pusher.com` are allowlisted: map the date picker / time-slot list / availability + confirm controls on `edge.brokerbay.com/dashboard/#/.../appointments/book`, then implement the booking + multi-listing routing.
 
-Next step: allowlist `*.brokerbay.com`, start a new session, re-run the "Online Appt" handoff to capture the live BrokerBay DOM, then build the booking flow.
+Next step: allowlist `app.launchdarkly.com` and `ws-us2.pusher.com`, start a new session, re-run `node scripts/realm/_bb2.mjs` to confirm the booking view renders (and capture its live DOM), then build the booking flow.
 
 ### Interim behavior
 
@@ -55,7 +62,7 @@ Until blocker 7 clears and the BrokerBay form is mapped, the `book-showing` skil
 
 ### Discovery tooling
 
-`scripts/realm/login.mjs` is the shared, verified login (Keycloak + HighLevel MFA, optional `storageState` session reuse via `browser.mjs`). `scripts/realm/_capture.mjs` and `scripts/realm/_bb.mjs` are temporary DOM-mapping harnesses (search→listing, and the Online Appt→BrokerBay handoff) — they never submit anything and can be deleted once BrokerBay is mapped.
+`scripts/realm/login.mjs` is the shared, verified login (Keycloak + HighLevel MFA, optional `storageState` session reuse via `browser.mjs`). `scripts/realm/_capture.mjs`, `scripts/realm/_bb.mjs`, and `scripts/realm/_bb2.mjs` are temporary DOM-mapping harnesses (search→listing, the Online Appt→BrokerBay handoff, and the handoff + full network/console trace) — they never submit anything and can be deleted once BrokerBay is mapped. `_bb2.mjs` is the one to re-run after the LaunchDarkly/Pusher allowlist change: it logs every host the booking SPA touches and flags which are blocked.
 
 ## Also available (not used yet)
 
