@@ -50,6 +50,14 @@ export async function completeJob(id: string): Promise<void> {
   await pgPool().query(`UPDATE jobs SET status = 'done' WHERE id = $1`, [id]);
 }
 
+/** Mark a job permanently failed (no retries) — e.g. unknown job type. */
+export async function failJobPermanently(id: string, error: string): Promise<void> {
+  await pgPool().query(
+    `UPDATE jobs SET status = 'failed', attempts = attempts + 1, last_error = $2 WHERE id = $1`,
+    [id, error.slice(0, 4000)],
+  );
+}
+
 const MAX_ATTEMPTS = 3;
 
 /** Record a failure: retry with backoff up to MAX_ATTEMPTS, then mark failed. Returns final status. */

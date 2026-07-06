@@ -66,6 +66,14 @@ export async function approveOffer(
 ): Promise<{ ok: boolean; error?: string }> {
   const d = db();
 
+  // Capture the current token hash so a failed send can restore it — the
+  // realtor's approval link must survive transient errors.
+  const preClaim = await d.query.offers.findFirst({
+    where: eq(schema.offers.id, offerId),
+    columns: { approvalTokenHash: true },
+  });
+  const priorTokenHash = preClaim?.approvalTokenHash ?? null;
+
   // Atomically flip pending_approval -> approved_sent so a token can't be used twice.
   const claimed = await d
     .update(schema.offers)
@@ -85,12 +93,21 @@ export async function approveOffer(
   const offer = claimed[0];
   if (!offer) return { ok: false, error: "Offer is not pending approval (already decided or expired)." };
 
-  if (!offer.recipientEmail) {
-    // Roll back so it can be fixed on the dashboard.
+  const rollback = async () => {
     await d
       .update(schema.offers)
-      .set({ status: "pending_approval", decidedAt: null, decidedVia: null, updatedAt: new Date() })
+      .set({
+        status: "pending_approval",
+        decidedAt: null,
+        decidedVia: null,
+        approvalTokenHash: priorTokenHash,
+        updatedAt: new Date(),
+      })
       .where(eq(schema.offers.id, offer.id));
+  };
+
+  if (!offer.recipientEmail) {
+    await rollback();
     return { ok: false, error: "No recipient email set — add the listing agent's email on the dashboard first." };
   }
 
@@ -101,10 +118,7 @@ export async function approveOffer(
       body: offer.draftEmailBody,
     });
   } catch (err) {
-    await d
-      .update(schema.offers)
-      .set({ status: "pending_approval", decidedAt: null, decidedVia: null, updatedAt: new Date() })
-      .where(eq(schema.offers.id, offer.id));
+    await rollback();
     return { ok: false, error: `Sending failed: ${(err as Error).message}` };
   }
 

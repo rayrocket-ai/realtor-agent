@@ -1,4 +1,4 @@
-import { claimNextJob, completeJob, failJob, enqueue } from "./queue.js";
+import { claimNextJob, completeJob, failJob, failJobPermanently, enqueue } from "./queue.js";
 import { handlers } from "./handlers/index.js";
 
 const TICK_MS = 15_000;
@@ -40,7 +40,7 @@ async function runJob(id: string, type: string, payload: Record<string, unknown>
   const handler = handlers[type];
   if (!handler) {
     console.error(`[jobs] no handler for job type "${type}"`);
-    await failJob(id, `no handler for type ${type}`);
+    await failJobPermanently(id, `no handler for type ${type}`);
     return;
   }
   try {
