@@ -4,10 +4,11 @@ import { otpFilePath } from "./browser.js";
 
 /**
  * Get the REALM one-time verification code when the login flow asks for one.
- * Two sources, polled together for up to ~3 minutes:
+ * Three sources, polled together for up to ~5 minutes:
  *   1. A code dropped manually — the dashboard's "verification code" box or
  *      `echo 123456 > data/booking/otp.txt` on the server.
- *   2. The realtor's Gmail (when connected): a recent message that mentions
+ *   2. HighLevel (when configured): the SMS conversation with REALM_OTP_SENDER.
+ *   3. The realtor's Gmail (when connected): a recent message that mentions
  *      REALM_OTP_SENDER (e.g. carrier-forwarded SMS or an emailed code).
  */
 
@@ -30,6 +31,54 @@ function readOtpFile(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The SMS conversation with the OTP sender in HighLevel. One search call
+ * returns the conversation's last message body — enough to grab a fresh code.
+ */
+async function readOtpFromHighLevel(since: Date): Promise<string | null> {
+  const c = config();
+  if (!c.HIGHLEVEL_API_TOKEN || !c.HIGHLEVEL_LOCATION_ID || !c.REALM_OTP_SENDER) return null;
+  const digits = c.REALM_OTP_SENDER.replace(/\D/g, "");
+  if (digits.length < 7) return null;
+  try {
+    const url =
+      `https://services.leadconnectorhq.com/conversations/search` +
+      `?locationId=${encodeURIComponent(c.HIGHLEVEL_LOCATION_ID)}&q=${encodeURIComponent(digits)}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${c.HIGHLEVEL_API_TOKEN}`,
+        Version: "2021-04-15",
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[booking] HighLevel OTP lookup failed: HTTP ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as {
+      conversations?: Array<{
+        phone?: string | null;
+        lastMessageBody?: string;
+        lastMessageDirection?: string;
+        lastMessageDate?: number;
+      }>;
+    };
+    // No extra grace here: `since` already predates the challenge screen, and a
+    // wider window can swallow the previous attempt's (now invalid) code.
+    const cutoff = since.getTime();
+    for (const conv of data.conversations ?? []) {
+      if (!(conv.phone ?? "").replace(/\D/g, "").includes(digits)) continue;
+      if (conv.lastMessageDirection !== "inbound") continue;
+      if ((conv.lastMessageDate ?? 0) < cutoff) continue;
+      const code = extractOtpCode(conv.lastMessageBody ?? "");
+      if (code) return code;
+    }
+  } catch (err) {
+    console.warn("[booking] HighLevel OTP lookup failed:", (err as Error).message);
+  }
+  return null;
 }
 
 async function readOtpFromGmail(since: Date): Promise<string | null> {
@@ -91,6 +140,8 @@ export async function waitForOtp(since: Date, timeoutMs = 300_000): Promise<stri
   while (Date.now() < deadline) {
     const fromFile = readOtpFile();
     if (fromFile) return fromFile;
+    const fromHighLevel = await readOtpFromHighLevel(since);
+    if (fromHighLevel) return fromHighLevel;
     const fromGmail = await readOtpFromGmail(since);
     if (fromGmail) return fromGmail;
     await new Promise((r) => setTimeout(r, 3000));

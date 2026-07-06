@@ -42,9 +42,14 @@ const envSchema = z.object({
   REALM_URL: z.string().default("https://hub.proptx.ca"),
   REALM_USERNAME: z.string().default(""),
   REALM_PASSWORD: z.string().default(""),
-  // Who sends REALM's one-time codes (phone number or email). When set and
-  // Gmail is connected, the agent reads the code from your inbox automatically.
+  // Who sends REALM's one-time codes (phone number or email). When set, the
+  // agent reads the code automatically from HighLevel (if configured below)
+  // or Gmail — no manual step.
   REALM_OTP_SENDER: z.string().default(""),
+  // HighLevel (GoHighLevel) — used to auto-read REALM's SMS codes when the
+  // OTP number is a HighLevel line. Private Integration token (pit-…).
+  HIGHLEVEL_API_TOKEN: z.string().default(""),
+  HIGHLEVEL_LOCATION_ID: z.string().default(""),
   BROKERBAY_EMAIL: z.string().default(""),
   BROKERBAY_PASSWORD: z.string().default(""),
   BOOKING_HEADLESS: z.enum(["0", "1"]).default("1"),
