@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "auth:google": "tsx src/cli/google-auth.ts",
     "send-test": "tsx src/cli/send-test.ts",
-    "audit": "tsx src/cli/audit.ts"
+    "audit": "tsx src/cli/audit.ts",
+    "telegram:setup": "tsx src/cli/telegram-setup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

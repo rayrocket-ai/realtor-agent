@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import crypto from "node:crypto";
 import { config } from "../../config.js";
 import { normalizeBoosendWebhook } from "../../channels/boosend/inbound.js";
+import { normalizeTelegramUpdate } from "../../channels/telegram/inbound.js";
 import { ingestInbound } from "../../channels/ingest.js";
 
 export async function webhookRoutes(app: FastifyInstance): Promise<void> {
@@ -53,6 +54,33 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       body: normalized.text,
       fromRealtor: normalized.fromSelf,
       meta: { source: "boosend" },
+    });
+
+    return reply.send({ ok: true, leadId: result.leadId, stored: result.stored });
+  });
+
+  app.post("/webhooks/telegram", async (req, reply) => {
+    const c = config();
+    if (!c.telegramEnabled) return reply.status(404).send({ error: "telegram not configured" });
+
+    // Telegram echoes the secret_token from setWebhook in this header on every delivery.
+    const provided = (req.headers["x-telegram-bot-api-secret-token"] as string | undefined) ?? "";
+    if (c.TELEGRAM_WEBHOOK_SECRET && !safeEq(provided, c.TELEGRAM_WEBHOOK_SECRET)) {
+      req.log.warn("telegram webhook: secret token mismatch");
+      return reply.status(401).send({ error: "invalid secret" });
+    }
+
+    const normalized = normalizeTelegramUpdate(req.body);
+    if (!normalized) return reply.send({ ok: true, ignored: true });
+
+    const result = await ingestInbound({
+      channel: "telegram",
+      externalId: normalized.chatId,
+      threadRef: normalized.chatId,
+      externalMsgId: `tg:${normalized.chatId}:${normalized.messageId}`,
+      name: normalized.name,
+      body: normalized.text,
+      meta: { source: "telegram", username: normalized.username },
     });
 
     return reply.send({ ok: true, leadId: result.leadId, stored: result.stored });
