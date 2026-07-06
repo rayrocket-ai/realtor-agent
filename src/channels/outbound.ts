@@ -3,6 +3,7 @@ import { db, schema } from "../db/client.js";
 import { config } from "../config.js";
 import { sendEmail } from "./gmail/send.js";
 import { sendBoosendMessage } from "./boosend/client.js";
+import { sendTelegramMessage } from "./telegram/client.js";
 import type { Lead } from "../db/schema.js";
 
 /**
@@ -29,10 +30,15 @@ export async function sendToLead(lead: Lead, text: string): Promise<void> {
   let externalMsgId: string | null = null;
   const c = config();
   const dryRun =
-    (channel === "gmail" && !c.gmailEnabled) || (channel !== "gmail" && !c.boosendEnabled);
+    (channel === "gmail" && !c.gmailEnabled) ||
+    (channel === "telegram" && !c.telegramEnabled) ||
+    (channel !== "gmail" && channel !== "telegram" && !c.boosendEnabled);
   if (dryRun) {
     // Dev/test without channel credentials: record the message, skip the send.
     console.log(`[outbound:dry-run] (${channel}) -> ${identity.externalId}: ${text.slice(0, 200)}`);
+  } else if (channel === "telegram") {
+    const res = await sendTelegramMessage(identity.externalId, text);
+    externalMsgId = res.id ? `tg:${identity.externalId}:${res.id}` : null;
   } else if (channel === "gmail") {
     const meta = (lastInbound?.meta ?? {}) as { subject?: string; rfcMessageId?: string };
     const subject = meta.subject

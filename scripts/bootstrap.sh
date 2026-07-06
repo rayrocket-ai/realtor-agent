@@ -57,6 +57,7 @@ fi
 [ -z "$(current GOOGLE_CLIENT_SECRET)" ] && sed -i "s|^GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=$(ask "Google OAuth client secret")|" .env
 [ -z "$(current BOOSEND_API_KEY)" ] && sed -i "s|^BOOSEND_API_KEY=.*|BOOSEND_API_KEY=$(ask "Boosend API key (enter to skip)")|" .env
 [ -z "$(current BOOSEND_WEBHOOK_SECRET)" ] && set_env BOOSEND_WEBHOOK_SECRET "$(gen)"
+[ -z "$(current TELEGRAM_WEBHOOK_SECRET)" ] && set_env TELEGRAM_WEBHOOK_SECRET "$(gen)"
 
 if [ -z "$(current GOOGLE_REFRESH_TOKEN)" ]; then
   say "Google authorization (one-time)"

@@ -27,6 +27,9 @@ const envSchema = z.object({
   BOOSEND_WEBHOOK_SECRET: z.string().default(""),
   BOOSEND_API_BASE: z.string().default("https://api.boosend.com/v1"),
 
+  TELEGRAM_BOT_TOKEN: z.string().default(""),
+  TELEGRAM_WEBHOOK_SECRET: z.string().default(""),
+
   REALTOR_NAME: z.string().default("Ray"),
   REALTOR_BROKERAGE: z.string().default("eXp Realty"),
   REALTOR_EMAIL: z.string().default(""),
@@ -43,6 +46,7 @@ export type Config = z.infer<typeof envSchema> & {
   workingHours: { start: string; end: string };
   gmailEnabled: boolean;
   boosendEnabled: boolean;
+  telegramEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -60,6 +64,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workingHours: { start, end },
     gmailEnabled: Boolean(c.GOOGLE_CLIENT_ID && c.GOOGLE_REFRESH_TOKEN && c.GMAIL_ADDRESS),
     boosendEnabled: Boolean(c.BOOSEND_API_KEY),
+    telegramEnabled: Boolean(c.TELEGRAM_BOT_TOKEN),
   };
 }
 
