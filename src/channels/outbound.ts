@@ -1,0 +1,67 @@
+import { and, desc, eq } from "drizzle-orm";
+import { db, schema } from "../db/client.js";
+import { config } from "../config.js";
+import { sendEmail } from "./gmail/send.js";
+import { sendBoosendMessage } from "./boosend/client.js";
+import type { Lead } from "../db/schema.js";
+
+/**
+ * Send a message to a lead on their most recent inbound channel and record
+ * it on the timeline. Used by the agent loop, reminders, and the dashboard's
+ * manual-send box.
+ */
+export async function sendToLead(lead: Lead, text: string): Promise<void> {
+  const d = db();
+  const lastInbound = await d.query.messages.findFirst({
+    where: and(eq(schema.messages.leadId, lead.id), eq(schema.messages.direction, "inbound")),
+    orderBy: desc(schema.messages.createdAt),
+  });
+  const channel = lastInbound?.channel ?? "gmail";
+
+  const identity = await d.query.channelIdentities.findFirst({
+    where: and(
+      eq(schema.channelIdentities.leadId, lead.id),
+      eq(schema.channelIdentities.channel, channel),
+    ),
+  });
+  if (!identity) throw new Error(`Lead ${lead.id} has no ${channel} channel identity`);
+
+  let externalMsgId: string | null = null;
+  const c = config();
+  const dryRun =
+    (channel === "gmail" && !c.gmailEnabled) || (channel !== "gmail" && !c.boosendEnabled);
+  if (dryRun) {
+    // Dev/test without channel credentials: record the message, skip the send.
+    console.log(`[outbound:dry-run] (${channel}) -> ${identity.externalId}: ${text.slice(0, 200)}`);
+  } else if (channel === "gmail") {
+    const meta = (lastInbound?.meta ?? {}) as { subject?: string; rfcMessageId?: string };
+    const subject = meta.subject
+      ? meta.subject.startsWith("Re:")
+        ? meta.subject
+        : `Re: ${meta.subject}`
+      : "Your real estate inquiry";
+    externalMsgId = await sendEmail({
+      to: identity.externalId,
+      subject,
+      body: text,
+      threadId: identity.threadRef,
+      inReplyTo: meta.rfcMessageId ?? null,
+    });
+  } else {
+    const res = await sendBoosendMessage({
+      channel,
+      contactId: identity.externalId,
+      conversationId: identity.threadRef,
+      text,
+    });
+    externalMsgId = res.id;
+  }
+
+  await d.insert(schema.messages).values({
+    leadId: lead.id,
+    channel,
+    direction: "outbound",
+    body: text,
+    externalMsgId,
+  });
+}
