@@ -27,6 +27,12 @@ const envSchema = z.object({
   BOOSEND_WEBHOOK_SECRET: z.string().default(""),
   BOOSEND_API_BASE: z.string().default("https://api.boosend.com/v1"),
 
+  // --- Telegram control bot (book showings by messaging the bot) ---
+  TELEGRAM_BOT_TOKEN: z.string().default(""),
+  // Comma-separated chat IDs allowed to command the bot. /start tells an
+  // unknown chat its own ID so you can add it here.
+  TELEGRAM_ALLOWED_CHAT_IDS: z.string().default(""),
+
   REALTOR_NAME: z.string().default("Ray"),
   REALTOR_BROKERAGE: z.string().default("eXp Realty"),
   REALTOR_EMAIL: z.string().default(""),
@@ -69,6 +75,8 @@ export type Config = z.infer<typeof envSchema> & {
   gmailEnabled: boolean;
   boosendEnabled: boolean;
   bookingEnabled: boolean;
+  telegramEnabled: boolean;
+  telegramAllowedChatIds: string[];
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -87,6 +95,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     gmailEnabled: Boolean(c.GOOGLE_CLIENT_ID && c.GOOGLE_REFRESH_TOKEN && c.GMAIL_ADDRESS),
     boosendEnabled: Boolean(c.BOOSEND_API_KEY),
     bookingEnabled: Boolean(c.REALM_USERNAME && c.REALM_PASSWORD),
+    telegramEnabled: Boolean(c.TELEGRAM_BOT_TOKEN),
+    telegramAllowedChatIds: c.TELEGRAM_ALLOWED_CHAT_IDS.split(",").map((s) => s.trim()).filter(Boolean),
   };
 }
 

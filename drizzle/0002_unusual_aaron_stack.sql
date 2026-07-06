@@ -1,0 +1,1 @@
+ALTER TABLE "mls_bookings" ADD COLUMN "notify_telegram_chat_id" text;

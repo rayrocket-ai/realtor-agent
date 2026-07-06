@@ -116,7 +116,9 @@ export const mlsBookings = pgTable(
     requestedStart: timestamp("requested_start", { withTimezone: true }).notNull(),
     durationMin: integer("duration_min").notNull().default(30),
     notes: text("notes"),
-    source: text("source").notNull().default("dashboard"), // dashboard|cli|agent
+    source: text("source").notNull().default("dashboard"), // dashboard|cli|agent|telegram
+    // When set, booking updates are also sent to this Telegram chat.
+    notifyTelegramChatId: text("notify_telegram_chat_id"),
     leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
     showingId: uuid("showing_id").references(() => showings.id, { onDelete: "set null" }),
     // pending|running|submitted|confirmed|needs_attention|failed|dry_run

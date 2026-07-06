@@ -21,10 +21,12 @@ export interface CreateBookingInput {
   requestedStart: Date;
   durationMin?: number;
   notes?: string | null;
-  source: "dashboard" | "cli" | "agent";
+  source: "dashboard" | "cli" | "agent" | "telegram";
   leadId?: string | null;
   showingId?: string | null;
   dryRun?: boolean;
+  /** When set, booking updates are also pushed to this Telegram chat. */
+  telegramChatId?: string | null;
 }
 
 /** Insert a booking request and queue it for the worker. Returns the row. */
@@ -38,6 +40,7 @@ export async function createBookingRequest(input: CreateBookingInput): Promise<M
       durationMin: input.durationMin ?? c.BOOKING_DEFAULT_DURATION_MIN,
       notes: input.notes ?? null,
       source: input.source,
+      notifyTelegramChatId: input.telegramChatId ?? null,
       leadId: input.leadId ?? null,
       showingId: input.showingId ?? null,
       dryRun: input.dryRun ?? c.BOOKING_DRY_RUN === "1",
@@ -64,7 +67,7 @@ export async function retryBooking(bookingId: string): Promise<void> {
   });
 }
 
-function realDeps(bookingId: string): BookingDeps {
+function realDeps(bookingId: string, telegramChatId?: string | null): BookingDeps {
   return {
     async update(patch) {
       await db().update(schema.mlsBookings).set(patch).where(eq(schema.mlsBookings.id, bookingId));
@@ -81,10 +84,16 @@ function realDeps(bookingId: string): BookingDeps {
       console.log(`[booking ${bookingId.slice(0, 8)}] ${step}${note ? `: ${note}` : ""}`);
     },
     async notify(subject, body) {
+      const link = `${config().APP_BASE_URL}/admin/bookings/${bookingId}`;
       await enqueue({
         type: "notify-realtor",
-        payload: { subject, body: `${body}\n\nDashboard: ${config().APP_BASE_URL}/admin/bookings/${bookingId}` },
+        payload: { subject, body: `${body}\n\nDashboard: ${link}` },
       });
+      // Mirror the update to the Telegram chat that started this booking.
+      if (telegramChatId) {
+        const { sendMessage } = await import("../channels/telegram/client.js");
+        await sendMessage(telegramChatId, `${subject}\n\n${body}`);
+      }
     },
     async createCalendarEvent(booking, result) {
       const c = config();
@@ -115,8 +124,8 @@ export async function runBooking(
   if (["confirmed", "submitted", "dry_run"].includes(booking.status)) {
     return { status: booking.status as BookingRunResult["status"], retryable: false };
   }
+  const deps = realDeps(bookingId, booking.notifyTelegramChatId);
   if (!config().bookingEnabled) {
-    const deps = realDeps(bookingId);
     await deps.update({
       status: "needs_attention",
       attentionReason: "REALM_USERNAME / REALM_PASSWORD are not configured — set them in .env and retry.",
@@ -128,5 +137,5 @@ export async function runBooking(
     );
     return { status: "needs_attention", retryable: false };
   }
-  return runBookingFlow(booking, flowFactory(bookingId), realDeps(bookingId));
+  return runBookingFlow(booking, flowFactory(bookingId), deps);
 }

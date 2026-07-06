@@ -61,6 +61,7 @@ fi
 if [ -n "$(current REALM_USERNAME)" ] && [ -z "$(current REALM_PASSWORD)" ]; then
   sed -i "s|^REALM_PASSWORD=.*|REALM_PASSWORD=$(ask "REALM password")|" .env
 fi
+[ -z "$(current TELEGRAM_BOT_TOKEN)" ] && sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$(ask "Telegram bot token from @BotFather, to book by chat (enter to skip)")|" .env
 
 if [ -z "$(current GOOGLE_REFRESH_TOKEN)" ]; then
   say "Google authorization (one-time)"
@@ -112,5 +113,14 @@ if [ -n "$(current REALM_USERNAME)" ]; then
                     then dry-run a booking:
                       docker compose exec app npm run book -- "36 Example Ave, Toronto" "tomorrow 2pm" --dry-run
                     and check https://${DOMAIN}/admin/bookings
+EOF
+fi
+
+if [ -n "$(current TELEGRAM_BOT_TOKEN)" ]; then
+  cat <<EOF
+
+  Telegram booking:  message your bot /whoami to get your chat ID, then add it:
+                       TELEGRAM_ALLOWED_CHAT_IDS=<your-id>   (in .env, then bash scripts/deploy.sh)
+                     after that, message it e.g. "16 Curry Cres tomorrow 5pm"
 EOF
 fi

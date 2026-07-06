@@ -96,10 +96,44 @@ When you trust it, set `GMAIL_MODE=all` in `.env` and run `bash scripts/deploy.s
 
 > Heads-up: BrokerBay and PropTx update their UIs without notice. If a booking fails with "portal UI mismatch", the error screenshot on the booking's dashboard page shows exactly where it got stuck — the selectors live in `src/booking/brokerbay-direct.ts`, `src/booking/proptx-sso.ts`, and (for the REALM path) `src/booking/realm.ts` + `brokerbay.ts`.
 
+### 5. Book showings from Telegram (optional)
+
+Message a bot an address and a time — it books the showing on BrokerBay and replies in the chat.
+
+1. In Telegram, open **@BotFather** → `/newbot`, follow the prompts, copy the token it gives you into `.env`:
+
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC-your-token
+   ```
+
+2. `bash scripts/deploy.sh`, then message your new bot `/whoami`. It replies with your chat ID. Add it to `.env` and deploy again:
+
+   ```
+   TELEGRAM_ALLOWED_CHAT_IDS=987654321        # comma-separate several people
+   ```
+
+   Only listed chats can book; everyone else is refused.
+
+3. Now just message the bot:
+
+   ```
+   16 Curry Cres tomorrow 5pm
+   36 Example Ave, Toronto sat 1:30pm
+   12 King St W 2026-07-08 14:00 for 45 min
+   16 Curry Cres tomorrow 5pm dry run     ← stops before the final submit
+   ```
+
+   It confirms it's on it, books immediately (per your setup), and messages you the result — the same confirmed / submitted / needs-attention outcome you'd get by email. Uses long-polling, so no public webhook or extra ports are needed.
+
 ## Day-to-day
 
 - **Dashboard:** `https://YOUR_DOMAIN/admin` — leads, timelines, offers, showings, MLS bookings.
-- **Book a showing on the MLS:** open `https://YOUR_DOMAIN/admin/bookings`, type the address and a time like `tomorrow 2pm` / `sat 1:30pm` / `2026-07-08 14:00`, hit **Book it** — or from a shell: `docker compose exec app npm run book -- "36 Example Ave" "sat 1pm"`. You'll get an email when BrokerBay confirms (instant-confirm listings) or when the request is submitted and waiting on the listing side.
+- **Book a showing on the MLS:** three ways —
+  - **Telegram:** message your bot `16 Curry Cres tomorrow 5pm` and it books immediately, replying in the chat when it's done (setup below).
+  - **Dashboard:** `https://YOUR_DOMAIN/admin/bookings` → address + a time like `tomorrow 2pm` / `sat 1:30pm` / `2026-07-08 14:00` → **Book it**.
+  - **Shell:** `docker compose exec app npm run book -- "36 Example Ave" "sat 1pm"`.
+
+  You'll get an email (and a Telegram reply, if that's how you started it) when BrokerBay confirms or when the request is submitted and waiting on the listing side.
 - **Offer approvals** arrive in your normal Gmail inbox with subject `[OFFER-xxxxxxxx]`. Click **Approve** (confirmation page → send), click **Reject** (add feedback, the AI revises), or just **reply** to the email: "approve" sends it, anything else is treated as rejection feedback. Links expire after 72 hours.
 - **Take over a conversation:** reply to the lead yourself from Gmail/Boosend (AI pauses 4h), or hit **Pause AI** on the lead's page (pauses until you resume).
 - **Update the app:** `cd /opt/realtor-agent && bash scripts/deploy.sh`
@@ -125,7 +159,7 @@ npm run typecheck
 
 One Node.js process (TypeScript, Fastify) + Postgres + Caddy, via Docker Compose.
 
-- **Inbound:** Gmail poller (every 45s, Gmail history API) and the Boosend webhook both normalize into one `messages` timeline per lead; the same person on email + WhatsApp merges into one lead by email/phone.
+- **Inbound:** Gmail poller (every 45s, Gmail history API) and the Boosend webhook both normalize into one `messages` timeline per lead; the same person on email + WhatsApp merges into one lead by email/phone. A separate **Telegram** bot (`src/channels/telegram/`, long-polling) is a control channel — allowlisted chats book showings by message; it parses `address + time` and queues an `mls_bookings` job, reusing the same booking engine.
 - **Agent:** each inbound message schedules a debounced turn (60s, so rapid texts collapse into one reply). A turn = load lead + timeline from Postgres → Claude (`ANTHROPIC_MODEL`, default `claude-sonnet-5`) with typed tools (`check_availability`, `book_showing`, `draft_offer`, `escalate_to_human`, …) → final text goes back out on the lead's channel. All state lives in Postgres; restarts lose nothing. Every turn is audit-logged in `agent_runs`.
 - **Jobs:** a Postgres-backed queue (`FOR UPDATE SKIP LOCKED`, 15s tick) runs reminders, follow-ups, and notifications — durable across restarts, no double-fires, 3 retries then you get an email.
 - **Offer safety:** `draft_offer` only writes a row and emails you. The single code path that can send an offer (`src/offers/approval.ts`) requires a valid single-use token or an authenticated dashboard action — i.e., you.
