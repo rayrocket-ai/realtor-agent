@@ -52,6 +52,12 @@ const envSchema = z.object({
   HIGHLEVEL_LOCATION_ID: z.string().default(""),
   BROKERBAY_EMAIL: z.string().default(""),
   BROKERBAY_PASSWORD: z.string().default(""),
+  // How to reach BrokerBay:
+  //   brokerbay = sign into edge.brokerbay.com directly (BrokerBay's own search
+  //               finds the listing) — the default, verified end-to-end.
+  //   realm     = search REALM/PropTx first, then follow its Book Showing handoff.
+  BOOKING_PORTAL: z.enum(["brokerbay", "realm"]).default("brokerbay"),
+  BROKERBAY_URL: z.string().default("https://edge.brokerbay.com"),
   BOOKING_HEADLESS: z.enum(["0", "1"]).default("1"),
   BOOKING_DRY_RUN: z.enum(["0", "1"]).default("0"),
   BOOKING_DATA_DIR: z.string().default("./data/booking"),

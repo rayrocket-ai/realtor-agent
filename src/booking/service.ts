@@ -5,8 +5,16 @@ import { enqueue } from "../jobs/queue.js";
 import { createEvent } from "../channels/gcal/client.js";
 import { runBookingFlow, type BookingDeps, type BookingRunResult } from "./orchestrator.js";
 import { RealmBrokerBayFlow } from "./flow.js";
+import { BrokerBayDirectFlow } from "./brokerbay-direct.js";
 import type { MlsBooking } from "../db/schema.js";
 import type { PortalFlow } from "./types.js";
+
+/** Pick the portal flow from config (BrokerBay-direct by default). */
+export function defaultFlow(bookingId: string): PortalFlow {
+  return config().BOOKING_PORTAL === "realm"
+    ? new RealmBrokerBayFlow(bookingId)
+    : new BrokerBayDirectFlow(bookingId);
+}
 
 export interface CreateBookingInput {
   address: string;
@@ -98,7 +106,7 @@ function realDeps(bookingId: string): BookingDeps {
 /** Load the row and run it through the portal flow. Used by the job handler and the CLI. */
 export async function runBooking(
   bookingId: string,
-  flowFactory: (bookingId: string) => PortalFlow = (id) => new RealmBrokerBayFlow(id),
+  flowFactory: (bookingId: string) => PortalFlow = defaultFlow,
 ): Promise<BookingRunResult> {
   const booking = await db().query.mlsBookings.findFirst({
     where: eq(schema.mlsBookings.id, bookingId),
