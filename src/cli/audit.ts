@@ -182,7 +182,54 @@ async function main() {
   const after = await pgPool().query(`SELECT count(*) FROM messages`);
   check("cancelled showing sends NO reminder", before.rows[0].count === after.rows[0].count);
 
-  console.log("\n== 7. Fresh offer for HTTP approval test ==");
+  console.log("\n== 7. Escalation to human ==");
+  scripted([
+    [tool("t-esc", "escalate_to_human", { reason: "Lead asked about mortgage penalty clauses (legal)", urgency: "high" })],
+    [text("I've flagged this for Ray — he'll reach out to you personally shortly.")],
+  ]);
+  await runAgentTurn(r1.leadId, "audit-escalate");
+  const escLead = (await d.query.leads.findFirst({ where: eq(schema.leads.id, r1.leadId) }))!;
+  check("escalation pauses the lead", escLead.paused === true);
+  const escNotify = await pgPool().query(
+    `SELECT payload FROM jobs WHERE type='notify-realtor' AND payload->>'subject' LIKE '%Lead needs you%'`,
+  );
+  check("escalation emails the realtor with urgency + timeline link", escNotify.rows.length === 1 && (escNotify.rows[0].payload.subject as string).startsWith("[HIGH]"));
+  await d.update(schema.leads).set({ paused: false }).where(eq(schema.leads.id, r1.leadId));
+
+  console.log("\n== 8. Scheduled follow-up (set_followup -> job -> agent turn) ==");
+  scripted([
+    [tool("t-fu", "set_followup", { when: new Date(Date.now() + 1000).toISOString(), reason: "Check how the mortgage pre-approval went" })],
+    [text("No problem — I'll check in with you soon!")],
+  ]);
+  await runAgentTurn(r1.leadId, "audit-followup-set");
+  const fuJob = await pgPool().query(`SELECT id FROM jobs WHERE type='followup' AND status='pending'`);
+  check("set_followup enqueued a followup job", fuJob.rows.length === 1);
+  await new Promise((r) => setTimeout(r, 1100));
+  scripted([[text("Hi Maya! Just checking in — how did the pre-approval go?")]]);
+  await tick(); // worker picks up the due followup job and runs an agent turn
+  const fuMsg = await d.query.messages.findFirst({
+    where: and(eq(schema.messages.leadId, r1.leadId), eq(schema.messages.direction, "outbound")),
+    orderBy: desc(schema.messages.createdAt),
+  });
+  check("followup fired: agent sent the check-in", fuMsg?.body.includes("pre-approval") === true);
+  const fuLead = (await d.query.leads.findFirst({ where: eq(schema.leads.id, r1.leadId) }))!;
+  check("followupAt cleared after firing", fuLead.followupAt === null);
+
+  console.log("\n== 9. Cancel showing via agent tool ==");
+  const [show2] = await d.insert(schema.showings).values({
+    leadId: r1.leadId, propertyAddress: "99 Oak Rd",
+    startsAt: new Date(Date.now() + 48 * 3600_000), endsAt: new Date(Date.now() + 49 * 3600_000),
+    status: "confirmed", gcalEventId: null, // no Google in the audit env
+  }).returning();
+  scripted([
+    [tool("t-cx", "cancel_showing", { showing_id: show2!.id })],
+    [text("Done — I've cancelled Saturday's showing at 99 Oak Rd. Want to pick another time?")],
+  ]);
+  await runAgentTurn(r1.leadId, "audit-cancel");
+  const cxShow = (await d.query.showings.findFirst({ where: eq(schema.showings.id, show2!.id) }))!;
+  check("cancel_showing marks showing cancelled", cxShow.status === "cancelled");
+
+  console.log("\n== 10. Fresh offer for HTTP approval test ==");
   scripted([
     [tool("t3", "draft_offer", {
       property_address: "45 Elm Ave, Toronto", price: 885000, deposit: 40000,
