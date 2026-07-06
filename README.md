@@ -1,6 +1,6 @@
 # realtor-agent
 
-Your 24/7 AI real estate assistant. It answers leads on **email (Gmail)** and **WhatsApp/Instagram (via Boosend)**, books **showings** straight into your "Real Estate" Google Calendar, drafts **offers** (Ontario / OREA Form 100 terms) that **you approve before anything is sent**, and follows up with leads automatically.
+Your 24/7 AI real estate assistant. It answers leads on **email (Gmail)** and **WhatsApp/Instagram (via Boosend)**, books **showings** straight into your "Real Estate" Google Calendar, **books the MLS side too** — give it an address and a time and it finds the listing on **REALM (PropTx)** and books the appointment through **BrokerBay** — drafts **offers** (Ontario / OREA Form 100 terms) that **you approve before anything is sent**, and follows up with leads automatically.
 
 Built for a solo agent running everything on one small server (e.g. a Hetzner VPS).
 
@@ -8,6 +8,7 @@ Built for a solo agent running everything on one small server (e.g. a Hetzner VP
 
 - **Answers every lead, instantly, 24/7** — email, WhatsApp, and Instagram DMs all flow into one conversation timeline per lead. The assistant always discloses that it's your AI assistant.
 - **Books showings** — checks your real Google Calendar availability (working hours: 9am–8pm Toronto by default), proposes times, books the event with the lead invited, and sends 24h + 2h reminders.
+- **Books the showing on the MLS side (REALM → BrokerBay)** — you give it just an address and a time (dashboard form or `npm run book -- "36 Example Ave" "tomorrow 2pm"`). A real browser signs into REALM, finds the listing, follows its **Book Showing** button into the **BrokerBay** portal, and books your requested slot. Every step is screenshotted; you get an email when it's confirmed (or when it needs you — 2FA, ambiguous address, slot taken). When a lead agrees to a time, the same MLS booking is queued automatically after the calendar hold.
 - **Drafts offers, never sends them** — when a buyer is ready, it collects price, deposit, irrevocable date, closing date, and conditions, then emails *you* a terms sheet + draft email with **Approve / Reject** links. You can also just reply "approve" to the email, or edit the draft on the dashboard first. Only your approval sends anything. This is enforced in code — the AI has no "send offer" capability at all.
 - **Knows when to shut up** — if you reply to a lead yourself (from Gmail or the Boosend console), the assistant pauses on that lead for 4 hours. You can also pause any lead permanently from the dashboard.
 - **Escalates to you** — legal/financing questions, upset leads, or "can I talk to Ray?" pause the AI and email you immediately.
@@ -53,9 +54,43 @@ By default (`GMAIL_MODE=label`) the assistant only handles email threads you lab
 
 When you trust it, set `GMAIL_MODE=all` in `.env` and run `bash scripts/deploy.sh` — it will then pick up any new inbound email that looks like a lead (newsletters, no-replys, and mailing lists are filtered out).
 
+### 4. Connect REALM + BrokerBay (MLS-side showing bookings)
+
+1. Put your REALM (PropTx) sign-in into `.env`:
+
+   ```
+   REALM_USERNAME=your-realm-user
+   REALM_PASSWORD=your-realm-password
+   ```
+
+   BrokerBay is normally reached through REALM's own **Book Showing** handoff (SSO), so no separate BrokerBay password is needed; if your board makes BrokerBay ask for its own sign-in, also set `BROKERBAY_EMAIL` / `BROKERBAY_PASSWORD`.
+
+   A numeric `REALM_USERNAME` (your TRREB member number) automatically signs in through the **"Log in with PropTx User ID"** SSO path (User ID + PIN); an email address uses the regular form.
+
+2. Sign in once so the session is saved to `./data/booking`:
+
+   ```bash
+   docker compose exec app npm run booking:login
+   ```
+
+   PropTx texts an **authorization code** to your phone during sign-in. Paste it into the code box on `/admin/bookings` (or `echo CODE > data/booking/otp.txt` on the server) within ~5 minutes and the sign-in finishes by itself. If you set `REALM_OTP_SENDER` and forward your SMS to Gmail, the agent grabs the code from your inbox with no help at all. This is one-time — the session is saved for future bookings.
+
+3. Do a **dry run** first — it finds the listing, opens BrokerBay, selects the slot, screenshots everything, and stops just before the final submit:
+
+   ```bash
+   docker compose exec app npm run book -- "36 Example Ave, Toronto" "tomorrow 2pm" --dry-run
+   ```
+
+   Check the screenshots at `https://YOUR_DOMAIN/admin/bookings`. If it sailed through, book for real (drop `--dry-run`), or set `BOOKING_DRY_RUN=1` in `.env` to keep everything in rehearsal mode while you build trust.
+
+**Safety model:** the final BrokerBay submit is recorded *before* it's clicked, so a crash mid-submit can never silently double-book — the booking parks as "needs attention" and you get an email telling you to check BrokerBay before retrying. "The portal said no" outcomes (listing not found, several matches, your slot taken — with the open slots listed, 2FA prompt, UI changed) never auto-retry either; they email you with screenshots. Only boring transient errors (timeouts before the submit step) retry automatically.
+
+> Heads-up: REALM and BrokerBay update their UIs without notice. If a booking fails with "portal UI mismatch", the error screenshot on the booking's dashboard page shows exactly where it got stuck — the selectors live in `src/booking/realm.ts` and `src/booking/brokerbay.ts`.
+
 ## Day-to-day
 
-- **Dashboard:** `https://YOUR_DOMAIN/admin` — leads, timelines, offers, showings.
+- **Dashboard:** `https://YOUR_DOMAIN/admin` — leads, timelines, offers, showings, MLS bookings.
+- **Book a showing on the MLS:** open `https://YOUR_DOMAIN/admin/bookings`, type the address and a time like `tomorrow 2pm` / `sat 1:30pm` / `2026-07-08 14:00`, hit **Book it** — or from a shell: `docker compose exec app npm run book -- "36 Example Ave" "sat 1pm"`. You'll get an email when BrokerBay confirms (instant-confirm listings) or when the request is submitted and waiting on the listing side.
 - **Offer approvals** arrive in your normal Gmail inbox with subject `[OFFER-xxxxxxxx]`. Click **Approve** (confirmation page → send), click **Reject** (add feedback, the AI revises), or just **reply** to the email: "approve" sends it, anything else is treated as rejection feedback. Links expire after 72 hours.
 - **Take over a conversation:** reply to the lead yourself from Gmail/Boosend (AI pauses 4h), or hit **Pause AI** on the lead's page (pauses until you resume).
 - **Update the app:** `cd /opt/realtor-agent && bash scripts/deploy.sh`
@@ -85,3 +120,4 @@ One Node.js process (TypeScript, Fastify) + Postgres + Caddy, via Docker Compose
 - **Agent:** each inbound message schedules a debounced turn (60s, so rapid texts collapse into one reply). A turn = load lead + timeline from Postgres → Claude (`ANTHROPIC_MODEL`, default `claude-sonnet-5`) with typed tools (`check_availability`, `book_showing`, `draft_offer`, `escalate_to_human`, …) → final text goes back out on the lead's channel. All state lives in Postgres; restarts lose nothing. Every turn is audit-logged in `agent_runs`.
 - **Jobs:** a Postgres-backed queue (`FOR UPDATE SKIP LOCKED`, 15s tick) runs reminders, follow-ups, and notifications — durable across restarts, no double-fires, 3 retries then you get an email.
 - **Offer safety:** `draft_offer` only writes a row and emails you. The single code path that can send an offer (`src/offers/approval.ts`) requires a valid single-use token or an authenticated dashboard action — i.e., you.
+- **MLS bookings:** an `mls_bookings` row + a durable `mls-booking` job per request. `src/booking/orchestrator.ts` drives a `PortalFlow` (Playwright persistent Chromium profile → REALM sign-in → listing search → BrokerBay handoff → slot → submit, `src/booking/{realm,brokerbay,flow}.ts`), logging every step to the row and screenshotting into `data/booking/shots/<id>/`. Requested times are parsed in `src/booking/time.ts` (timezone-aware, DST-safe). The orchestrator is fully unit-tested against a fake portal.

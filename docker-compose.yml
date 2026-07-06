@@ -6,11 +6,17 @@ services:
     environment:
       TZ: ${TZ:-America/Toronto}
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/realtor
+      BOOKING_DATA_DIR: /app/data/booking
     depends_on:
       db:
         condition: service_healthy
     expose:
       - "3000"
+    # Chromium (REALM/BrokerBay bookings) needs a real /dev/shm
+    shm_size: "1gb"
+    volumes:
+      # persists the REALM/BrokerBay login session + booking screenshots
+      - ./data:/app/data
 
   db:
     image: postgres:16-alpine

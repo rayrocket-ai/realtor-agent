@@ -98,6 +98,45 @@ export const offers = pgTable("offers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export interface BookingLogEntry {
+  t: string; // ISO timestamp
+  step: string;
+  note?: string;
+}
+
+/**
+ * A request to book a showing on the MLS side: search REALM for the listing,
+ * follow its "Book Showing" handoff into BrokerBay, and book the requested slot.
+ */
+export const mlsBookings = pgTable(
+  "mls_bookings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    address: text("address").notNull(), // as given by the realtor
+    requestedStart: timestamp("requested_start", { withTimezone: true }).notNull(),
+    durationMin: integer("duration_min").notNull().default(30),
+    notes: text("notes"),
+    source: text("source").notNull().default("dashboard"), // dashboard|cli|agent
+    leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+    showingId: uuid("showing_id").references(() => showings.id, { onDelete: "set null" }),
+    // pending|running|submitted|confirmed|needs_attention|failed|dry_run
+    status: text("status").notNull().default("pending"),
+    attentionReason: text("attention_reason"),
+    mlsNumber: text("mls_number"),
+    matchedAddress: text("matched_address"), // the listing REALM actually matched
+    confirmationText: text("confirmation_text"), // what BrokerBay said after submit
+    gcalEventId: text("gcal_event_id"),
+    dryRun: boolean("dry_run").notNull().default(false),
+    // Set right before the final BrokerBay submit click — guards against double-booking on retry.
+    submitAttemptedAt: timestamp("submit_attempted_at", { withTimezone: true }),
+    log: jsonb("log").$type<BookingLogEntry[]>().notNull().default([]),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("mls_bookings_status_idx").on(t.status, t.createdAt)],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -143,5 +182,6 @@ export type Lead = typeof leads.$inferSelect;
 export type ChannelIdentity = typeof channelIdentities.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Showing = typeof showings.$inferSelect;
+export type MlsBooking = typeof mlsBookings.$inferSelect;
 export type Offer = typeof offers.$inferSelect;
 export type Job = typeof jobs.$inferSelect;

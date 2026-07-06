@@ -6,7 +6,7 @@ import { approveOffer, rejectOffer } from "../../offers/approval.js";
 import { sendToLead } from "../../channels/outbound.js";
 import { escapeHtml as esc } from "./approvals.js";
 
-function layout(title: string, body: string): string {
+export function layout(title: string, body: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} — realtor-agent</title>
@@ -18,6 +18,8 @@ function layout(title: string, body: string): string {
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#e5e7eb}
   .pill.offer_sent,.pill.approved_sent{background:#dcfce7}.pill.pending_approval{background:#fef9c3}
   .pill.rejected,.pill.lost{background:#fee2e2}.pill.paused{background:#fee2e2}
+  .pill.confirmed{background:#dcfce7}.pill.submitted{background:#dbeafe}.pill.running{background:#dbeafe}
+  .pill.needs_attention{background:#fef9c3}.pill.failed{background:#fee2e2}
   .msg{padding:8px 12px;border-radius:8px;margin:6px 0;max-width:80%;white-space:pre-wrap;font-size:14px}
   .inbound{background:#f3f4f6}.outbound{background:#dbeafe;margin-left:auto}.internal_note{background:#fef9c3;font-style:italic}
   .btn{display:inline-block;padding:6px 14px;border-radius:6px;border:none;font-weight:600;cursor:pointer;font-size:14px}
@@ -27,13 +29,13 @@ function layout(title: string, body: string): string {
   .muted{color:#6b7280;font-size:13px}
   form.inline{display:inline}
 </style></head><body>
-<nav><a href="/admin">Leads</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a></nav>
+<nav><a href="/admin">Leads</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/bookings">MLS bookings</a></nav>
 <h2>${esc(title)}</h2>
 ${body}
 </body></html>`;
 }
 
-function fmt(d: Date | null): string {
+export function fmt(d: Date | null): string {
   if (!d) return "";
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: config().TZ,

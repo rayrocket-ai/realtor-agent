@@ -3,6 +3,7 @@ import { db, schema } from "../../db/client.js";
 import { config } from "../../config.js";
 import { findFreeSlots, createEvent, updateEvent, deleteEvent } from "../../channels/gcal/client.js";
 import { enqueue } from "../../jobs/queue.js";
+import { createBookingRequest } from "../../booking/service.js";
 import type { AgentTool } from "./index.js";
 
 function fmt(d: Date): string {
@@ -134,7 +135,23 @@ export const calendarTools: AgentTool[] = [
         .set({ stage: "showing_booked", updatedAt: new Date() })
         .where(eq(schema.leads.id, ctx.lead.id));
 
-      return `Booked: ${address} on ${fmt(startsAt)} (showing id: ${showing!.id}). Calendar invite ${ctx.lead.email ? "sent to the lead's email" : "created"}. Reminders scheduled for 24h and 2h before.`;
+      // When REALM/BrokerBay is configured, also book the showing on the MLS
+      // side (searches REALM for the listing, books via BrokerBay).
+      let mlsNote = "";
+      if (c.bookingEnabled) {
+        await createBookingRequest({
+          address,
+          requestedStart: startsAt,
+          durationMin: duration,
+          notes: null,
+          source: "agent",
+          leadId: ctx.lead.id,
+          showingId: showing!.id,
+        });
+        mlsNote = " The MLS-side booking (REALM → BrokerBay) has been queued; the realtor is emailed once it's confirmed.";
+      }
+
+      return `Booked: ${address} on ${fmt(startsAt)} (showing id: ${showing!.id}). Calendar invite ${ctx.lead.email ? "sent to the lead's email" : "created"}. Reminders scheduled for 24h and 2h before.${mlsNote}`;
     },
   },
   {

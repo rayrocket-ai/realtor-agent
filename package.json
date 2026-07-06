@@ -13,7 +13,9 @@
     "db:generate": "drizzle-kit generate",
     "auth:google": "tsx src/cli/google-auth.ts",
     "send-test": "tsx src/cli/send-test.ts",
-    "audit": "tsx src/cli/audit.ts"
+    "audit": "tsx src/cli/audit.ts",
+    "book": "tsx src/cli/book.ts",
+    "booking:login": "tsx src/cli/booking-login.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
@@ -23,6 +25,7 @@
     "fastify": "^5.2.0",
     "googleapis": "^144.0.0",
     "pg": "^8.13.1",
+    "playwright": "^1.49.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -37,12 +37,27 @@ const envSchema = z.object({
     .regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/)
     .default("09:00-20:00"),
   TZ: z.string().default("America/Toronto"),
+
+  // --- REALM (PropTx MLS) + BrokerBay showing bookings ---
+  REALM_URL: z.string().default("https://hub.proptx.ca"),
+  REALM_USERNAME: z.string().default(""),
+  REALM_PASSWORD: z.string().default(""),
+  // Who sends REALM's one-time codes (phone number or email). When set and
+  // Gmail is connected, the agent reads the code from your inbox automatically.
+  REALM_OTP_SENDER: z.string().default(""),
+  BROKERBAY_EMAIL: z.string().default(""),
+  BROKERBAY_PASSWORD: z.string().default(""),
+  BOOKING_HEADLESS: z.enum(["0", "1"]).default("1"),
+  BOOKING_DRY_RUN: z.enum(["0", "1"]).default("0"),
+  BOOKING_DATA_DIR: z.string().default("./data/booking"),
+  BOOKING_DEFAULT_DURATION_MIN: z.coerce.number().default(30),
 });
 
 export type Config = z.infer<typeof envSchema> & {
   workingHours: { start: string; end: string };
   gmailEnabled: boolean;
   boosendEnabled: boolean;
+  bookingEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -60,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workingHours: { start, end },
     gmailEnabled: Boolean(c.GOOGLE_CLIENT_ID && c.GOOGLE_REFRESH_TOKEN && c.GMAIL_ADDRESS),
     boosendEnabled: Boolean(c.BOOSEND_API_KEY),
+    bookingEnabled: Boolean(c.REALM_USERNAME && c.REALM_PASSWORD),
   };
 }
 

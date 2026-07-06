@@ -57,6 +57,10 @@ fi
 [ -z "$(current GOOGLE_CLIENT_SECRET)" ] && sed -i "s|^GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=$(ask "Google OAuth client secret")|" .env
 [ -z "$(current BOOSEND_API_KEY)" ] && sed -i "s|^BOOSEND_API_KEY=.*|BOOSEND_API_KEY=$(ask "Boosend API key (enter to skip)")|" .env
 [ -z "$(current BOOSEND_WEBHOOK_SECRET)" ] && set_env BOOSEND_WEBHOOK_SECRET "$(gen)"
+[ -z "$(current REALM_USERNAME)" ] && sed -i "s|^REALM_USERNAME=.*|REALM_USERNAME=$(ask "REALM (PropTx) username for BrokerBay showing bookings (enter to skip)")|" .env
+if [ -n "$(current REALM_USERNAME)" ] && [ -z "$(current REALM_PASSWORD)" ]; then
+  sed -i "s|^REALM_PASSWORD=.*|REALM_PASSWORD=$(ask "REALM password")|" .env
+fi
 
 if [ -z "$(current GOOGLE_REFRESH_TOKEN)" ]; then
   say "Google authorization (one-time)"
@@ -99,3 +103,14 @@ cat <<EOF
 
   Update later:     cd ${APP_DIR} && bash scripts/deploy.sh
 EOF
+
+if [ -n "$(current REALM_USERNAME)" ]; then
+  cat <<EOF
+
+  MLS bookings:     sign into REALM once so the session is saved:
+                      docker compose exec app npm run booking:login
+                    then dry-run a booking:
+                      docker compose exec app npm run book -- "36 Example Ave, Toronto" "tomorrow 2pm" --dry-run
+                    and check https://${DOMAIN}/admin/bookings
+EOF
+fi
