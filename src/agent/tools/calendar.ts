@@ -84,8 +84,10 @@ export const calendarTools: AgentTool[] = [
         properties: {
           property_address: { type: "string" },
           mls_number: { type: "string" },
-          starts_at: { type: "string", description: "ISO 8601 start time (use the exact 'starts' value from check_availability)" },
+          starts_at: { type: "string", description: "ISO 8601 start time (use the exact 'starts' value from check_availability or plan_showing_tour)" },
           duration_min: { type: "integer", description: "Duration in minutes (default 45)" },
+          tour_id: { type: "string", description: "Tour id when this showing is part of a plan_showing_tour plan" },
+          travel_minutes_from_prev: { type: "integer", description: "Drive minutes from the previous stop (from the tour plan)" },
         },
         required: ["property_address", "starts_at"],
       },
@@ -125,6 +127,10 @@ export const calendarTools: AgentTool[] = [
           gcalEventId: eventId,
           status: "confirmed",
           remindersScheduled: true,
+          tourId: input.tour_id ? String(input.tour_id) : null,
+          confirmationStatus: "pending",
+          travelMinutesFromPrev:
+            input.travel_minutes_from_prev != null ? Number(input.travel_minutes_from_prev) : null,
         })
         .returning();
 

@@ -1,9 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { db, schema } from "../../db/client.js";
 import { config } from "../../config.js";
 import { approveOffer, rejectOffer } from "../../offers/approval.js";
 import { sendToLead } from "../../channels/outbound.js";
+import {
+  approvalMode,
+  setApprovalMode,
+  approvePendingMessage,
+  rejectPendingMessage,
+} from "../../approvals/messages.js";
 import { escapeHtml as esc } from "./approvals.js";
 
 function layout(title: string, body: string): string {
@@ -27,7 +33,7 @@ function layout(title: string, body: string): string {
   .muted{color:#6b7280;font-size:13px}
   form.inline{display:inline}
 </style></head><body>
-<nav><a href="/admin">Leads</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a></nav>
+<nav><a href="/admin">Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/activity">Activity</a></nav>
 <h2>${esc(title)}</h2>
 ${body}
 </body></html>`;
@@ -190,6 +196,190 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
       return reply.redirect("/admin/offers");
     },
   );
+
+  app.get("/approvals", async (_req, reply) => {
+    const d = db();
+    const [pending, mode, recentDecided] = await Promise.all([
+      d.query.pendingMessages.findMany({
+        where: eq(schema.pendingMessages.status, "pending"),
+        orderBy: asc(schema.pendingMessages.createdAt),
+      }),
+      approvalMode(),
+      d.query.pendingMessages.findMany({
+        where: eq(schema.pendingMessages.status, "approved"),
+        orderBy: desc(schema.pendingMessages.decidedAt),
+        limit: 20,
+      }),
+    ]);
+    const cleanApprovals = recentDecided.filter((p) => p.sentText === p.draftText).length;
+
+    const leadsById = new Map(
+      (await d.query.leads.findMany()).map((l) => [l.id, l] as const),
+    );
+
+    const cards = pending
+      .map((p) => {
+        const lead = leadsById.get(p.leadId);
+        return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0">
+          <p><strong><a href="/admin/leads/${p.leadId}">${esc(lead?.name ?? lead?.email ?? "lead")}</a></strong>
+             <span class="pill">${esc(p.channel)}</span> <span class="muted">${fmt(p.createdAt)}</span></p>
+          <form method="post" action="/admin/approvals/${p.id}/approve">
+            <textarea name="edited" rows="5">${esc(p.draftText)}</textarea>
+            <button class="btn approve" type="submit">Send${"" /* edits auto-detected */}</button>
+          </form>
+          <form method="post" action="/admin/approvals/${p.id}/reject" class="inline">
+            <input type="text" name="reason" placeholder="Reject with feedback…">
+            <button class="btn reject" type="submit">Discard</button>
+          </form>
+        </div>`;
+      })
+      .join("");
+
+    reply.type("text/html");
+    return layout(
+      "Approvals",
+      `<p>Training wheels: <strong>${mode === "all" ? "ON — every reply needs your approval" : "OFF — replies send automatically"}</strong>
+       <form class="inline" method="post" action="/admin/approvals/mode">
+         <input type="hidden" name="mode" value="${mode === "all" ? "off" : "all"}">
+         <button class="btn neutral" type="submit">${mode === "all" ? "Turn OFF (go full-auto)" : "Turn ON"}</button>
+       </form></p>
+       <p class="muted">Recent drafts sent without edits: ${cleanApprovals}/${recentDecided.length || 0} — when this is consistently high, it's safe to go full-auto.</p>
+       ${cards || '<p class="muted">Nothing waiting for you. 🎉</p>'}`,
+    );
+  });
+
+  app.post<{ Body: { mode?: string } }>("/approvals/mode", async (req, reply) => {
+    const mode = req.body?.mode === "off" ? "off" : "all";
+    await setApprovalMode(mode);
+    return reply.redirect("/admin/approvals");
+  });
+
+  app.post<{ Params: { id: string }; Body: { edited?: string } }>(
+    "/approvals/:id/approve",
+    async (req, reply) => {
+      const pm = await db().query.pendingMessages.findFirst({
+        where: eq(schema.pendingMessages.id, req.params.id),
+      });
+      if (pm) {
+        const edited = (req.body?.edited ?? "").trim();
+        await approvePendingMessage(
+          pm.id,
+          "dashboard",
+          edited && edited !== pm.draftText ? edited : undefined,
+        );
+      }
+      return reply.redirect("/admin/approvals");
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/approvals/:id/reject",
+    async (req, reply) => {
+      await rejectPendingMessage(req.params.id, "dashboard", req.body?.reason ?? "");
+      return reply.redirect("/admin/approvals");
+    },
+  );
+
+  app.get("/tours", async (_req, reply) => {
+    const rows = await db().query.tours.findMany({ orderBy: desc(schema.tours.createdAt), limit: 30 });
+    const body = rows
+      .map(
+        (t) => `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0">
+        <p><strong>${esc(t.tourDate)}</strong> <span class="pill ${t.status}">${esc(t.status)}</span>
+           <a href="/admin/leads/${t.leadId}" class="muted">lead</a></p>
+        <pre>${esc(t.itineraryMd ?? "(itinerary not generated yet — agent calls finalize_tour once all stops are booked)")}</pre>
+      </div>`,
+      )
+      .join("");
+    reply.type("text/html");
+    return layout("Tours", body || '<p class="muted">No tours yet.</p>');
+  });
+
+  app.get("/feedback", async (_req, reply) => {
+    const d = db();
+    const rows = await d.query.listingShowings.findMany({
+      orderBy: desc(schema.listingShowings.updatedAt),
+      limit: 100,
+    });
+    const listingsById = new Map((await d.query.listings.findMany()).map((l) => [l.id, l] as const));
+    const body = `<table><tr><th>Listing</th><th>Showing agent</th><th>Buyer interest</th><th>Next follow-up</th><th>Notes</th></tr>
+      ${rows
+        .map(
+          (r) => `<tr>
+        <td>${esc(listingsById.get(r.listingId)?.propertyAddress ?? "?")}</td>
+        <td>${r.agentLeadId ? `<a href="/admin/leads/${r.agentLeadId}">` : ""}${esc(r.agentName ?? r.agentEmail ?? "?")}${r.agentLeadId ? "</a>" : ""}</td>
+        <td><span class="pill">${esc(r.buyerInterest ?? "awaiting")}</span> ${r.followupStatus === "closed" ? '<span class="muted">closed</span>' : ""}</td>
+        <td>${fmt(r.nextFollowupAt)}</td>
+        <td class="muted">${esc((r.feedbackNotes ?? "").slice(0, 120))}</td></tr>`,
+        )
+        .join("")}
+    </table>${rows.length === 0 ? '<p class="muted">No listing showings yet — they appear automatically from BrokerBay confirmation emails.</p>' : ""}`;
+    reply.type("text/html");
+    return layout("Listing feedback pipeline", body);
+  });
+
+  app.get("/listings", async (_req, reply) => {
+    const rows = await db().query.listings.findMany({ orderBy: desc(schema.listings.createdAt) });
+    const body = `<form method="post" action="/admin/listings">
+        <p><input type="text" name="address" placeholder="Property address (as it appears in BrokerBay emails)" required>
+        <input type="text" name="mls" placeholder="MLS # (optional)">
+        <button class="btn approve" type="submit">Add listing</button></p>
+      </form>
+      <table><tr><th>Address</th><th>MLS</th><th>Status</th><th></th></tr>
+      ${rows
+        .map(
+          (l) => `<tr><td>${esc(l.propertyAddress)}</td><td>${esc(l.mlsNumber ?? "")}</td>
+          <td><span class="pill ${l.status}">${esc(l.status)}</span></td>
+          <td><form class="inline" method="post" action="/admin/listings/${l.id}/toggle"><button class="btn neutral" type="submit">${l.status === "active" ? "Mark sold/inactive" : "Reactivate"}</button></form></td></tr>`,
+        )
+        .join("")}
+      </table>
+      <p class="muted">Add your active listings here so BrokerBay showing confirmations on them trigger the feedback follow-up engine.</p>`;
+    reply.type("text/html");
+    return layout("My Listings", body);
+  });
+
+  app.post<{ Body: { address?: string; mls?: string } }>("/listings", async (req, reply) => {
+    const address = (req.body?.address ?? "").trim();
+    if (address) {
+      await db().insert(schema.listings).values({
+        propertyAddress: address,
+        mlsNumber: (req.body?.mls ?? "").trim() || null,
+      });
+    }
+    return reply.redirect("/admin/listings");
+  });
+
+  app.post<{ Params: { id: string } }>("/listings/:id/toggle", async (req, reply) => {
+    const l = await db().query.listings.findFirst({ where: eq(schema.listings.id, req.params.id) });
+    if (l) {
+      await db()
+        .update(schema.listings)
+        .set({ status: l.status === "active" ? "sold" : "active" })
+        .where(eq(schema.listings.id, l.id));
+    }
+    return reply.redirect("/admin/listings");
+  });
+
+  app.get("/activity", async (_req, reply) => {
+    const runs = await db().query.agentRuns.findMany({
+      orderBy: desc(schema.agentRuns.createdAt),
+      limit: 50,
+    });
+    const body = `<table><tr><th>When</th><th>Trigger</th><th>Tools used</th><th>Outcome</th></tr>
+      ${runs
+        .map((r) => {
+          const tools = (r.toolCalls as Array<{ name?: string }>).map((t) => t.name).filter(Boolean).join(", ");
+          return `<tr><td>${fmt(r.createdAt)}</td>
+          <td>${r.leadId ? `<a href="/admin/leads/${r.leadId}">${esc(r.trigger)}</a>` : esc(r.trigger)}</td>
+          <td class="muted">${esc(tools || "—")}</td>
+          <td>${r.error ? `<span class="pill rejected">error</span> <span class="muted">${esc(r.error.slice(0, 80))}</span>` : esc((r.output ?? "").slice(0, 120))}</td></tr>`;
+        })
+        .join("")}
+    </table>`;
+    reply.type("text/html");
+    return layout("Agent activity", body);
+  });
 
   app.get("/showings", async (_req, reply) => {
     const rows = await db().query.showings.findMany({

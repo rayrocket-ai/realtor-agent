@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { config } from "../config.js";
 import { healthRoutes } from "./routes/health.js";
 import { webhookRoutes } from "./routes/webhooks.js";
-import { approvalRoutes } from "./routes/approvals.js";
+import { approvalRoutes, messageApprovalRoutes } from "./routes/approvals.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -28,6 +28,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(webhookRoutes);
   await app.register(approvalRoutes);
+  await app.register(messageApprovalRoutes);
   await app.register(dashboardRoutes, { prefix: "/admin" });
 
   return app;

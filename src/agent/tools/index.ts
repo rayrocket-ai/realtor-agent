@@ -4,6 +4,8 @@ import { calendarTools } from "./calendar.js";
 import { leadTools } from "./lead.js";
 import { offerTools } from "./offer.js";
 import { escalateTools } from "./escalate.js";
+import { tourTools } from "./tour.js";
+import { feedbackTools } from "./feedback.js";
 
 export interface ToolContext {
   lead: Lead;
@@ -15,7 +17,7 @@ export interface AgentTool {
 }
 
 export function allTools(): AgentTool[] {
-  return [...calendarTools, ...leadTools, ...offerTools, ...escalateTools];
+  return [...calendarTools, ...leadTools, ...offerTools, ...escalateTools, ...tourTools, ...feedbackTools];
 }
 
 export function toolDefinitions(): Anthropic.Tool[] {

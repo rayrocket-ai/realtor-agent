@@ -5,6 +5,9 @@ import { config } from "../../config.js";
 import { db, schema } from "../../db/client.js";
 import { ingestInbound } from "../ingest.js";
 import { handleOfferReply } from "../../offers/approval.js";
+import { handleDraftReply } from "../../approvals/messages.js";
+import { isBrokerBayEmail, parseBrokerBayEmail } from "../brokerbay/parse.js";
+import { ingestBrokerBayEvent } from "../../feedback/engine.js";
 
 const HISTORY_KEY = "gmail_history_id";
 const POLL_INTERVAL_MS = 45_000;
@@ -138,9 +141,22 @@ async function processMessage(gmail: gmail_v1.Gmail, messageId: string): Promise
   const isFromSelf =
     fromEmail.toLowerCase() === c.GMAIL_ADDRESS.toLowerCase() || labels.includes("SENT");
 
+  // BrokerBay notifications (showing confirmations/changes) — the inbox is our API.
+  if (!isFromSelf && isBrokerBayEmail(fromEmail, subject)) {
+    const outcome = await ingestBrokerBayEvent(parseBrokerBayEmail(subject, body));
+    console.log(`[brokerbay] ${outcome}`);
+    return;
+  }
+
   // Realtor replying to an offer-approval notification: "[OFFER-xxxxxxxx]" in subject.
   if (isFromSelf && /\[OFFER-[0-9a-f]{8}\]/i.test(subject)) {
     await handleOfferReply(subject, body);
+    return;
+  }
+
+  // Realtor replying to a draft-approval notification: "[MSG-xxxxxxxx]" in subject.
+  if (isFromSelf && /\[MSG-[0-9a-f]{8}\]/i.test(subject)) {
+    await handleDraftReply(subject, body);
     return;
   }
 
