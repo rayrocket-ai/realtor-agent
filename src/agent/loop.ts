@@ -1,44 +1,40 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { eq } from "drizzle-orm";
+import type Anthropic from "@anthropic-ai/sdk";
+import { desc, eq } from "drizzle-orm";
 import { db, schema } from "../db/client.js";
 import { config } from "../config.js";
 import { systemPrompt } from "./prompts.js";
 import { buildContext, renderLeadBrief } from "./context.js";
 import { toolDefinitions, executeTool } from "./tools/index.js";
 import { sendToLead } from "../channels/outbound.js";
+import { getClient, setAnthropicClient, type MinimalAnthropicClient } from "./client.js";
+import { approvalRequired, queueDraft } from "../approvals/messages.js";
 
 const MAX_ITERATIONS = 10;
 const MAX_TOKENS = 4096;
+const MAX_ACTIVE_LESSONS = 50;
 
-export interface MinimalAnthropicClient {
-  messages: {
-    create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
-  };
-}
-
-let clientOverride: MinimalAnthropicClient | undefined;
-
-/** Test/dev hook: replace the Anthropic client (used by vitest and MOCK_ANTHROPIC). */
-export function setAnthropicClient(client: MinimalAnthropicClient | undefined): void {
-  clientOverride = client;
-}
-
-function getClient(): MinimalAnthropicClient {
-  if (clientOverride) return clientOverride;
-  if (config().MOCK_ANTHROPIC) return mockClient();
-  return new Anthropic({ apiKey: config().ANTHROPIC_API_KEY });
-}
+export { setAnthropicClient, type MinimalAnthropicClient };
 
 export interface AgentTurnResult {
   replied: boolean;
+  queued?: boolean; // true when the reply went to the approval queue instead of out
   reason?: string;
   output?: string;
 }
 
+async function activeLessons(): Promise<string[]> {
+  const rows = await db().query.lessons.findMany({
+    where: eq(schema.lessons.active, true),
+    orderBy: desc(schema.lessons.createdAt),
+    limit: MAX_ACTIVE_LESSONS,
+  });
+  return rows.map((r) => r.lesson);
+}
+
 /**
- * Run one agent turn for a lead: build context, run the tool-use loop, send
- * the final text on the lead's channel. The Postgres timeline is the only
- * conversation state — restarts are free.
+ * Run one agent turn for a lead: build context, run the tool-use loop, then
+ * either send the final text or queue it for the realtor's approval
+ * (training-wheels mode). Postgres is the only conversation state.
  */
 export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise<AgentTurnResult> {
   const c = config();
@@ -53,6 +49,7 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
 
   const client = getClient();
   const tools = toolDefinitions();
+  const lessons = await activeLessons();
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: renderLeadBrief(ctx) }];
   const toolCallLog: unknown[] = [];
   let inputTokens = 0;
@@ -64,7 +61,7 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
       const response = await client.messages.create({
         model: c.ANTHROPIC_MODEL,
         max_tokens: MAX_TOKENS,
-        system: systemPrompt(),
+        system: systemPrompt(lessons),
         tools,
         messages,
       });
@@ -107,21 +104,28 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
       messages.push({ role: "user", content: results });
     }
 
+    let queued = false;
     if (finalText) {
-      await sendToLead(lead, finalText);
+      if (await approvalRequired(lead)) {
+        const channel = await lastInboundChannel(leadId);
+        await queueDraft(lead, channel, finalText);
+        queued = true;
+      } else {
+        await sendToLead(lead, finalText);
+      }
     }
 
     await db().insert(schema.agentRuns).values({
       leadId,
       trigger,
       toolCalls: toolCallLog,
-      output: finalText || null,
+      output: finalText ? (queued ? `[queued for approval] ${finalText}` : finalText) : null,
       model: c.ANTHROPIC_MODEL,
       inputTokens,
       outputTokens,
     });
 
-    return { replied: Boolean(finalText), output: finalText };
+    return { replied: Boolean(finalText), queued, output: finalText };
   } catch (err) {
     await db()
       .insert(schema.agentRuns)
@@ -139,33 +143,10 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
   }
 }
 
-/** Canned-response client for local dev without an API key (MOCK_ANTHROPIC=1). */
-function mockClient(): MinimalAnthropicClient {
-  return {
-    messages: {
-      async create(params) {
-        const text =
-          `Hi! I'm ${config().REALTOR_NAME}'s AI assistant at ${config().REALTOR_BROKERAGE} ` +
-          `(mock mode — set ANTHROPIC_API_KEY for real replies). How can I help with your home search?`;
-        return {
-          id: "msg_mock",
-          type: "message",
-          role: "assistant",
-          model: params.model,
-          content: [{ type: "text", text, citations: null }],
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: null,
-            cache_read_input_tokens: null,
-            cache_creation: null,
-            server_tool_use: null,
-            service_tier: null,
-          },
-        } as Anthropic.Message;
-      },
-    },
-  };
+async function lastInboundChannel(leadId: string): Promise<string> {
+  const last = await db().query.messages.findFirst({
+    where: eq(schema.messages.leadId, leadId),
+    orderBy: desc(schema.messages.createdAt),
+  });
+  return last?.channel ?? "gmail";
 }

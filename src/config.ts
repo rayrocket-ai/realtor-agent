@@ -30,6 +30,12 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(""),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(""),
 
+  // Review-before-send training wheels: 'all' = every reply needs approval
+  // (unless the lead is marked auto-approve), 'off' = full auto.
+  APPROVAL_MODE: z.enum(["all", "off"]).default("all"),
+  MAPS_API_KEY: z.string().default(""),
+  OFFICE_ADDRESS: z.string().default("8600 Keele St, Concord, ON L4K 4H8"),
+
   REALTOR_NAME: z.string().default("Ray"),
   REALTOR_BROKERAGE: z.string().default("eXp Realty"),
   REALTOR_EMAIL: z.string().default(""),
@@ -47,6 +53,7 @@ export type Config = z.infer<typeof envSchema> & {
   gmailEnabled: boolean;
   boosendEnabled: boolean;
   telegramEnabled: boolean;
+  mapsEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -65,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     gmailEnabled: Boolean(c.GOOGLE_CLIENT_ID && c.GOOGLE_REFRESH_TOKEN && c.GMAIL_ADDRESS),
     boosendEnabled: Boolean(c.BOOSEND_API_KEY),
     telegramEnabled: Boolean(c.TELEGRAM_BOT_TOKEN),
+    mapsEnabled: Boolean(c.MAPS_API_KEY),
   };
 }
 

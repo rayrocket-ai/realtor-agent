@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { db, closeDb } from "./db/client.js";
 import { buildApp } from "./server/app.js";
 import { startWorker, stopWorker } from "./jobs/worker.js";
+import { ensureRecurringJobs } from "./jobs/recurring.js";
 import { startGmailPoller, stopGmailPoller } from "./channels/gmail/poller.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
 
   startWorker();
   startGmailPoller();
+  await ensureRecurringJobs();
 
   if (!c.gmailEnabled) console.warn("[warn] Gmail/Calendar not configured — run `npm run auth:google` and fill in .env");
   if (!c.boosendEnabled) console.warn("[warn] Boosend not configured — WhatsApp/Instagram disabled");

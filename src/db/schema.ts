@@ -21,6 +21,7 @@ export const leads = pgTable("leads", {
   preferences: jsonb("preferences").$type<Record<string, unknown>>().default({}),
   paused: boolean("paused").notNull().default(false),
   pausedUntil: timestamp("paused_until", { withTimezone: true }),
+  autoApprove: boolean("auto_approve").notNull().default(false),
   followupAt: timestamp("followup_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -73,7 +74,91 @@ export const showings = pgTable("showings", {
   gcalEventId: text("gcal_event_id"),
   status: text("status").notNull().default("confirmed"), // proposed|confirmed|cancelled|completed
   remindersScheduled: boolean("reminders_scheduled").notNull().default(false),
+  tourId: uuid("tour_id"),
+  lockboxCode: text("lockbox_code"),
+  instructions: text("instructions"),
+  confirmationStatus: text("confirmation_status"), // pending|confirmed|declined (from BrokerBay)
+  travelMinutesFromPrev: integer("travel_minutes_from_prev"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tours = pgTable("tours", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id")
+    .notNull()
+    .references(() => leads.id, { onDelete: "cascade" }),
+  tourDate: text("tour_date").notNull(), // YYYY-MM-DD in office timezone
+  status: text("status").notNull().default("proposed"), // proposed|booked|confirmed|completed|cancelled
+  itineraryMd: text("itinerary_md"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Messages awaiting the realtor's review before they are sent (training wheels).
+export const pendingMessages = pgTable("pending_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id")
+    .notNull()
+    .references(() => leads.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),
+  draftText: text("draft_text").notNull(),
+  sentText: text("sent_text"),
+  status: text("status").notNull().default("pending"), // pending|approved|rejected|expired
+  approvalTokenHash: text("approval_token_hash"),
+  tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decidedVia: text("decided_via"), // link|email_reply|dashboard
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Distilled standing instructions the agent learned from Ray's edits/corrections.
+export const lessons = pgTable("lessons", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  category: text("category").notNull().default("general"),
+  lesson: text("lesson").notNull(),
+  sourceType: text("source_type").notNull().default("edit_diff"), // edit_diff|correction|instruction
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Raw draft-vs-sent evidence, distilled nightly into lessons.
+export const agentFeedback = pgTable("agent_feedback", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  draftText: text("draft_text").notNull(),
+  sentText: text("sent_text").notNull(),
+  distilled: boolean("distilled").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Ray's own listings (sell side).
+export const listings = pgTable("listings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  propertyAddress: text("property_address").notNull(),
+  mlsNumber: text("mls_number"),
+  status: text("status").notNull().default("active"), // active|sold|leased|suspended
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Outside agents' showings ON Ray's listings (parsed from BrokerBay emails).
+export const listingShowings = pgTable("listing_showings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  listingId: uuid("listing_id")
+    .notNull()
+    .references(() => listings.id, { onDelete: "cascade" }),
+  agentName: text("agent_name"),
+  agentEmail: text("agent_email"),
+  agentPhone: text("agent_phone"),
+  agentLeadId: uuid("agent_lead_id").references(() => leads.id, { onDelete: "set null" }),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  status: text("status").notNull().default("confirmed"), // requested|confirmed|declined|cancelled|completed
+  buyerInterest: text("buyer_interest"), // hot|warm|fifty_fifty|cold|no_response
+  feedbackNotes: text("feedback_notes"),
+  cadenceStage: integer("cadence_stage").notNull().default(0),
+  nextFollowupAt: timestamp("next_followup_at", { withTimezone: true }),
+  followupStatus: text("followup_status").notNull().default("active"), // active|closed
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const offers = pgTable("offers", {
@@ -140,6 +225,11 @@ export const appState = pgTable("app_state", {
 });
 
 export type Lead = typeof leads.$inferSelect;
+export type Tour = typeof tours.$inferSelect;
+export type PendingMessage = typeof pendingMessages.$inferSelect;
+export type Lesson = typeof lessons.$inferSelect;
+export type Listing = typeof listings.$inferSelect;
+export type ListingShowing = typeof listingShowings.$inferSelect;
 export type ChannelIdentity = typeof channelIdentities.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Showing = typeof showings.$inferSelect;

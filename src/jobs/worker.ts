@@ -1,5 +1,6 @@
 import { claimNextJob, completeJob, failJob, failJobPermanently, enqueue } from "./queue.js";
 import { handlers } from "./handlers/index.js";
+import { RECURRING_JOBS, scheduleRecurring } from "./recurring.js";
 
 const TICK_MS = 15_000;
 
@@ -46,6 +47,7 @@ async function runJob(id: string, type: string, payload: Record<string, unknown>
   try {
     await handler(payload);
     await completeJob(id);
+    if (RECURRING_JOBS[type]) await scheduleRecurring(type);
   } catch (err) {
     const message = (err as Error).stack ?? String(err);
     console.error(`[jobs] job ${type}/${id} failed:`, message);
