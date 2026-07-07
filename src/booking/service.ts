@@ -27,6 +27,11 @@ export interface CreateBookingInput {
   dryRun?: boolean;
   /** When set, booking updates are also pushed to this Telegram chat. */
   telegramChatId?: string | null;
+  /** Set when this booking is one stop of a multi-home tour. */
+  tourId?: string | null;
+  tourStop?: number | null;
+  /** Delay the job so tour stops book in itinerary order. */
+  enqueueRunAt?: Date;
 }
 
 /** Insert a booking request and queue it for the worker. Returns the row. */
@@ -41,6 +46,8 @@ export async function createBookingRequest(input: CreateBookingInput): Promise<M
       notes: input.notes ?? null,
       source: input.source,
       notifyTelegramChatId: input.telegramChatId ?? null,
+      tourId: input.tourId ?? null,
+      tourStop: input.tourStop ?? null,
       leadId: input.leadId ?? null,
       showingId: input.showingId ?? null,
       dryRun: input.dryRun ?? c.BOOKING_DRY_RUN === "1",
@@ -49,6 +56,7 @@ export async function createBookingRequest(input: CreateBookingInput): Promise<M
   await enqueue({
     type: "mls-booking",
     payload: { bookingId: row!.id },
+    runAt: input.enqueueRunAt,
     dedupeKey: `mls-booking:${row!.id}`,
   });
   return row!;
@@ -121,7 +129,7 @@ export async function runBooking(
     where: eq(schema.mlsBookings.id, bookingId),
   });
   if (!booking) throw Object.assign(new Error(`booking ${bookingId} not found`), { permanent: true });
-  if (["confirmed", "submitted", "dry_run"].includes(booking.status)) {
+  if (["confirmed", "submitted", "dry_run", "cancelled"].includes(booking.status)) {
     return { status: booking.status as BookingRunResult["status"], retryable: false };
   }
   const deps = realDeps(bookingId, booking.notifyTelegramChatId);

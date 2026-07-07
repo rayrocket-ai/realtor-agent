@@ -16,8 +16,34 @@ vi.mock("./browser.js", () => ({
   saveShot: vi.fn(async () => null),
 }));
 
-import { BrokerBayDirectFlow } from "./brokerbay-direct.js";
+import { BrokerBayDirectFlow, addressFromCardText, mlsFromCardText } from "./brokerbay-direct.js";
 import { SubmitStateUnknownError } from "./types.js";
+
+describe("card text extraction (DOM textContent glues nodes without spaces)", () => {
+  // EXACT string captured from the live portal: badge glued to board name,
+  // MLS glued to street number, street glued to municipality, price glued to
+  // days-on-market.
+  const GLUED =
+    "NewTRREB: W1350310616 Curry CrescentHalton Hills, ON$1,588,0008 dEeXp REALTY INC. BROKERAGERARay Ahmadi NANadiya Amanullah FAFuad Arolambo Request ShowingAdd to tour";
+
+  it("extracts the MLS number despite the glued street number", () => {
+    expect(mlsFromCardText(GLUED)).toBe("W13503106");
+  });
+
+  it("extracts a clean address", () => {
+    expect(addressFromCardText(GLUED, "fallback")).toBe("16 Curry Crescent Halton Hills, ON");
+  });
+
+  it("handles a spaced (non-glued) card too", () => {
+    const t = "New • TRREB: W13503106 16 Curry Crescent Halton Hills, ON $1,588,000";
+    expect(mlsFromCardText(t)).toBe("W13503106");
+    expect(addressFromCardText(t, "fallback")).toBe("16 Curry Crescent Halton Hills, ON");
+  });
+
+  it("falls back to the given ref when the card has no usable address", () => {
+    expect(addressFromCardText("$1,000", "16 Curry Cres")).toBe("16 Curry Cres");
+  });
+});
 
 /**
  * A minimal fake Playwright Page: submit() clicks a "Book Showing" button then

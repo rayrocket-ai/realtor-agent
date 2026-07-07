@@ -38,6 +38,44 @@ async function waitForApp(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Pull the MLS number out of a card's text. DOM textContent concatenates nodes
+ * without whitespace, so "TRREB: W13503106" + "16 Curry…" arrives glued as
+ * "TRREB: W1350310616 Curry…" — anchor on the board prefix first.
+ */
+export function mlsFromCardText(cardText: string): string | null {
+  // No leading \b: textContent glues the status badge to the board name,
+  // e.g. "NewTRREB: W13503106…".
+  const prefixed = /(?:TRREB|MLS|ITSO|OREB|RAHB)[®™]?[:#]?\s*([A-Z]\d{8})/i.exec(cardText);
+  if (prefixed) return prefixed[1]!.toUpperCase();
+  const bare = /\b([A-Z]\d{7,8})\b/.exec(cardText);
+  return bare ? bare[1]! : null;
+}
+
+/**
+ * Pull the street address out of a search-result card's text, e.g. (glued)
+ * "New • TRREB: W1350310616 Curry CrescentHalton Hills, ON$1,588,000 …"
+ * → "16 Curry Crescent Halton Hills, ON".
+ */
+export function addressFromCardText(cardText: string, fallback: string): string {
+  let t = cardText.replace(/\s+/g, " ").trim();
+  const dollar = t.indexOf("$");
+  if (dollar > 0) t = t.slice(0, dollar);
+  t = t
+    // Board-prefixed MLS number, glued or not (see mlsFromCardText).
+    .replace(/(?:TRREB|MLS|ITSO|OREB|RAHB)[®™]?[:#]?\s*[A-Z]\d{8}/gi, " ")
+    .replace(/\b[A-Z]\d{7,8}\b/g, " ")
+    .replace(/\bNew\b|[•·|]/g, " ")
+    // Re-insert the spaces textContent swallowed between elements.
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Addresses start at the street number.
+  const m = /\d+.*$/.exec(t);
+  const addr = (m ? m[0] : t).trim();
+  return addr.length >= 6 ? addr.slice(0, 200) : fallback;
+}
+
 export class BrokerBayDirectFlow implements PortalFlow {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
@@ -89,7 +127,11 @@ export class BrokerBayDirectFlow implements PortalFlow {
     await saveShot(page, this.bookingId, "brokerbay-signed-in");
   }
 
-  async searchListing(address: string): Promise<ListingMatch> {
+  /**
+   * Type a ref (address or MLS number) into the app search and wait for result
+   * cards. Returns the single match's card info; throws on none/ambiguous.
+   */
+  private async findInSearch(ref: string): Promise<{ address: string; mlsNumber: string | null }> {
     const page = this.p();
     const search = await firstVisible(page, [
       'input[placeholder*="Search listings" i]',
@@ -97,20 +139,14 @@ export class BrokerBayDirectFlow implements PortalFlow {
     ]);
     if (!search) throw new PortalChangedError("brokerbay-search", "couldn't find the BrokerBay search box");
     await search.click();
-    await search.fill(address);
+    await search.fill("");
+    await search.fill(ref);
     await page.waitForTimeout(3500);
 
     // The results panel lists listings with a "Request Showing" button each.
     const requestButtons = page.locator('button:has-text("Request Showing")');
     const count = await requestButtons.count().catch(() => 0);
-    if (count === 0) {
-      // No "Request Showing" — maybe the address didn't match anything.
-      const panelText = ((await page.textContent("body").catch(() => "")) ?? "").toLowerCase();
-      if (panelText.includes("no results") || panelText.includes("no listings")) {
-        throw new ListingNotFoundError(address);
-      }
-      throw new ListingNotFoundError(address);
-    }
+    if (count === 0) throw new ListingNotFoundError(ref);
     if (count > 1) {
       // Distinct listings for the same query → ask the realtor to be specific.
       const labels: string[] = [];
@@ -120,15 +156,29 @@ export class BrokerBayDirectFlow implements PortalFlow {
         const t = ((await cards.nth(i).textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
         if (t) labels.push(t.slice(0, 120));
       }
-      throw new AmbiguousListingError(address, labels.length ? labels : [`${count} matching listings`]);
+      throw new AmbiguousListingError(ref, labels.length ? labels : [`${count} matching listings`]);
     }
 
-    // Capture MLS number + matched address text from the single result card.
     const card = page.locator('[class*="result" i], [class*="listing" i]').first();
     const cardText = ((await card.textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
-    const mls = /\b([A-Z]\d{7,8})\b/.exec(cardText);
-    this.listingMls = mls ? mls[1]! : null;
+    return { address: addressFromCardText(cardText, ref), mlsNumber: mlsFromCardText(cardText) };
+  }
 
+  /**
+   * Look a ref up WITHOUT opening the booking screen — used by the tour
+   * planner to resolve MLS numbers to addresses before routing.
+   */
+  async resolveListing(ref: string): Promise<ListingMatch> {
+    const found = await this.findInSearch(ref);
+    return { mlsNumber: found.mlsNumber, matchedAddress: found.address };
+  }
+
+  async searchListing(ref: string): Promise<ListingMatch> {
+    const page = this.p();
+    const found = await this.findInSearch(ref);
+    this.listingMls = found.mlsNumber;
+
+    const requestButtons = page.locator('button:has-text("Request Showing")');
     await requestButtons.first().click();
     // The booking screen shows "Step 3 - Select Time".
     await page.locator("text=/Select Time/i").first().waitFor({ timeout: 30_000 }).catch(() => {
@@ -137,7 +187,7 @@ export class BrokerBayDirectFlow implements PortalFlow {
     await page.waitForTimeout(3000);
     await saveShot(page, this.bookingId, "booking-form");
 
-    return { mlsNumber: this.listingMls, matchedAddress: address };
+    return { mlsNumber: this.listingMls, matchedAddress: found.address };
   }
 
   async openBooking(): Promise<void> {

@@ -71,7 +71,7 @@ export async function runBookingFlow(
     await deps.logStep("init", "launching browser and signing into REALM");
     await flow.init();
 
-    await deps.logStep("search", `searching REALM for "${booking.address}"`);
+    await deps.logStep("search", `searching the MLS portal for "${booking.address}"`);
     const listing = await flow.searchListing(booking.address);
     await deps.update({
       mlsNumber: listing.mlsNumber,

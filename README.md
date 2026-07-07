@@ -114,16 +114,29 @@ Message a bot an address and a time — it books the showing on BrokerBay and re
 
    Only listed chats can book; everyone else is refused.
 
-3. Now just message the bot:
+3. Now just message the bot — **one home** (address or MLS number):
 
    ```
    16 Curry Cres tomorrow 5pm
-   36 Example Ave, Toronto sat 1:30pm
+   W13503106 tomorrow 6pm
    12 King St W 2026-07-08 14:00 for 45 min
    16 Curry Cres tomorrow 5pm dry run     ← stops before the final submit
    ```
 
-   It confirms it's on it, books immediately (per your setup), and messages you the result — the same confirmed / submitted / needs-attention outcome you'd get by email. Uses long-polling, so no public webhook or extra ports are needed.
+   …or **a tour** — several homes, one start time. The bot resolves each listing, orders them by **driving distance**, and books them **back-to-back**: the first at your time, each next one after the showing plus estimated drive time (snapped to BrokerBay's 15-minute grid). Send MLS numbers on one line, or one listing per line with the time last:
+
+   ```
+   W13503106 C5877233 W9988776 tomorrow 6pm
+
+   16 Curry Cres
+   34 Buttonleaf Cres
+   47 Boyce Ave
+   for 6pm
+   ```
+
+   You get the itinerary first (order, times, drive distances), then a message per stop as BrokerBay responds. Reply **`cancel`** to cancel whatever is still pending; **`/status`** shows your recent bookings. Routing uses OpenStreetMap geocoding — if an address can't be located, the tour still books in the order you sent.
+
+   It books immediately (per your setup) and messages you the result — the same confirmed / submitted / needs-attention outcomes you'd get by email. Uses long-polling, so no public webhook or extra ports are needed.
 
 ## Day-to-day
 

@@ -56,7 +56,7 @@ export async function bookingRoutes(app: FastifyInstance): Promise<void> {
       ${rows
         .map(
           (b) => `<tr>
-          <td><a href="/admin/bookings/${b.id}">${esc(b.address)}</a>${b.dryRun ? ' <span class="pill">dry run</span>' : ""}</td>
+          <td><a href="/admin/bookings/${b.id}">${esc(b.address)}</a>${b.tourStop ? ` <span class="pill">tour · stop ${b.tourStop}</span>` : ""}${b.dryRun ? ' <span class="pill">dry run</span>' : ""}</td>
           <td>${fmt(b.requestedStart)} · ${b.durationMin} min</td>
           <td><span class="pill ${b.status}">${esc(b.status)}</span></td>
           <td>${esc(b.mlsNumber ?? "")}</td></tr>`,

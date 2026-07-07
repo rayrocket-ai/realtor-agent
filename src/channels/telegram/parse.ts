@@ -11,11 +11,19 @@ import { parseRequestedTime, TimeParseError, type ParsedTime } from "../../booki
  */
 
 export interface ParsedBookingMessage {
-  address: string;
+  /** Listing refs in given order: street addresses and/or MLS numbers. */
+  refs: string[];
   start: Date;
   echo: string;
   durationMin?: number;
   dryRun: boolean;
+}
+
+/** TRREB-style MLS number, e.g. W13503106. */
+export const MLS_RE = /^[A-Za-z]\d{7,8}$/;
+
+export function isMlsNumber(s: string): boolean {
+  return MLS_RE.test(s.trim());
 }
 
 export class BookingMessageError extends Error {
@@ -43,12 +51,50 @@ function extractDuration(text: string): { text: string; durationMin?: number } {
   return { text: (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim(), durationMin };
 }
 
+/**
+ * Split the listings part into individual refs.
+ *  - Newlines always separate listings.
+ *  - Commas separate listings only when BOTH sides look like a new listing
+ *    (street number or MLS number) — so "36 Example Ave, Toronto" stays whole.
+ */
+function splitRefs(listingsPart: string): string[] {
+  const startsListing = (s: string) => /^\d+\s+\S/.test(s.trim()) || isMlsNumber(s.trim());
+  const lines = listingsPart
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const refs: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(",").map((p) => p.trim()).filter(Boolean);
+    let current = "";
+    for (const part of parts) {
+      if (current && startsListing(part)) {
+        refs.push(current);
+        current = part;
+      } else {
+        current = current ? `${current}, ${part}` : part;
+      }
+    }
+    if (current) refs.push(current);
+  }
+  // MLS numbers may also be space-separated on one line: "W13503106 C5877233".
+  const out: string[] = [];
+  for (const r of refs) {
+    const tokens = r.split(/\s+/);
+    if (tokens.length > 1 && tokens.every((t) => isMlsNumber(t))) out.push(...tokens);
+    else out.push(stripAddressTail(r));
+  }
+  return out.filter((r) => r.length >= 3);
+}
+
 export function parseBookingMessage(
   raw: string,
   opts: { tz: string; now?: Date },
 ): ParsedBookingMessage {
-  let text = raw.trim().replace(/\s+/g, " ");
-  if (!text) throw new BookingMessageError("Send me an address and a time, e.g. “16 Curry Cres tomorrow 5pm”.");
+  let text = raw.trim();
+  if (!text) {
+    throw new BookingMessageError("Send me an address (or MLS number) and a time, e.g. “16 Curry Cres tomorrow 5pm”.");
+  }
 
   // Modifiers first.
   const dryRun = /\bdry[\s-]?run\b/i.test(text);
@@ -57,12 +103,9 @@ export function parseBookingMessage(
   text = dur.text;
   const durationMin = dur.durationMin;
 
-  // Explicit separators win (address | time, address ; time, address / newline).
-  const sep = text.match(/^(.*?)[|;\n]\s*(.+)$/s);
-  const tryParse = (address: string, timePart: string): ParsedBookingMessage | null => {
-    address = stripAddressTail(address);
-    const t = timePart.trim().replace(/^\b(on|at)\b\s+/i, "");
-    if (address.length < 3 || !t) return null;
+  const tryParse = (listingsPart: string, timePart: string): ParsedBookingMessage | null => {
+    const t = timePart.trim().replace(/^\b(on|at|for)\b\s+/i, "");
+    if (!t) return null;
     let parsed: ParsedTime;
     try {
       parsed = parseRequestedTime(t, { tz: opts.tz, now: opts.now });
@@ -70,20 +113,32 @@ export function parseBookingMessage(
       if (err instanceof TimeParseError) return null;
       throw err;
     }
-    return { address, start: parsed.start, echo: parsed.echo, durationMin, dryRun };
+    const refs = splitRefs(listingsPart);
+    if (!refs.length) return null;
+    return { refs, start: parsed.start, echo: parsed.echo, durationMin, dryRun };
   };
 
+  // Explicit "|" or ";" separator between listings and time wins.
+  const sep = text.match(/^(.*)[|;]\s*(.+)$/s);
   if (sep) {
     const hit = tryParse(sep[1]!, sep[2]!);
     if (hit) return hit;
   }
 
-  // Otherwise scan for the earliest time-expression start that actually parses.
+  // If the LAST line parses as a time on its own, everything above is listings.
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length > 1) {
+    const hit = tryParse(lines.slice(0, -1).join("\n"), lines[lines.length - 1]!.replace(/^\b(on|at|for)\b\s+/i, ""));
+    if (hit) return hit;
+  }
+
+  // Otherwise scan the flattened text for the earliest parseable time expression.
+  const flat = text.replace(/\s+/g, " ").trim();
   const markers: number[] = [];
-  for (const m of text.matchAll(TIME_START)) if (m.index !== undefined) markers.push(m.index);
+  for (const m of flat.matchAll(TIME_START)) if (m.index !== undefined) markers.push(m.index);
   for (const idx of markers) {
-    if (idx === 0) continue; // no address before it
-    const hit = tryParse(text.slice(0, idx), text.slice(idx));
+    if (idx === 0) continue; // no listing before it
+    const hit = tryParse(flat.slice(0, idx), flat.slice(idx));
     if (hit) return hit;
   }
 
@@ -91,7 +146,7 @@ export function parseBookingMessage(
   const looksLikeOnlyAddress = markers.length === 0;
   throw new BookingMessageError(
     looksLikeOnlyAddress
-      ? `Got the address but no time. Add one, e.g. “${text} tomorrow 5pm” or “${text} sat 1:30pm”.`
-      : `Couldn't read that. Try “<address>, <time>”, e.g. “16 Curry Cres, tomorrow 5pm” or “16 Curry Cres 2026-07-08 14:00”.`,
+      ? `Got the listing but no time. Add one, e.g. “${flat} tomorrow 5pm” or “${flat} sat 1:30pm”.`
+      : `Couldn't read that. Try “<address or MLS#>, <time>”, e.g. “16 Curry Cres, tomorrow 5pm” — or several listings on separate lines with the time last.`,
   );
 }

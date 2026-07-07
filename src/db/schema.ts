@@ -105,6 +105,40 @@ export interface BookingLogEntry {
 }
 
 /**
+ * A multi-home showing tour: several listings booked back-to-back starting at
+ * one time, ordered by driving distance. Each stop becomes an mls_bookings row.
+ */
+export const tours = pgTable("tours", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Listing refs as given: addresses and/or MLS numbers. */
+  refs: jsonb("refs").$type<string[]>().notNull().default([]),
+  requestedStart: timestamp("requested_start", { withTimezone: true }).notNull(),
+  durationMin: integer("duration_min").notNull().default(30), // per stop
+  notes: text("notes"),
+  source: text("source").notNull().default("telegram"),
+  notifyTelegramChatId: text("notify_telegram_chat_id"),
+  // pending|planning|booked|failed|needs_attention|cancelled
+  status: text("status").notNull().default("pending"),
+  /** Resolved plan: ordered stops with addresses, times, distances. */
+  itinerary: jsonb("itinerary").$type<TourStopPlan[]>().notNull().default([]),
+  error: text("error"),
+  dryRun: boolean("dry_run").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export interface TourStopPlan {
+  ref: string; // as given
+  address: string; // resolved
+  mlsNumber?: string | null;
+  lat?: number;
+  lng?: number;
+  startsAt: string; // ISO
+  travelMinFromPrev?: number;
+  distanceKmFromPrev?: number;
+}
+
+/**
  * A request to book a showing on the MLS side: search REALM for the listing,
  * follow its "Book Showing" handoff into BrokerBay, and book the requested slot.
  */
@@ -119,9 +153,12 @@ export const mlsBookings = pgTable(
     source: text("source").notNull().default("dashboard"), // dashboard|cli|agent|telegram
     // When set, booking updates are also sent to this Telegram chat.
     notifyTelegramChatId: text("notify_telegram_chat_id"),
+    // Set when this booking is one stop of a multi-home tour.
+    tourId: uuid("tour_id").references(() => tours.id, { onDelete: "set null" }),
+    tourStop: integer("tour_stop"), // 1-based position in the tour
     leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
     showingId: uuid("showing_id").references(() => showings.id, { onDelete: "set null" }),
-    // pending|running|submitted|confirmed|needs_attention|failed|dry_run
+    // pending|running|submitted|confirmed|needs_attention|failed|dry_run|cancelled
     status: text("status").notNull().default("pending"),
     attentionReason: text("attention_reason"),
     mlsNumber: text("mls_number"),
@@ -185,5 +222,6 @@ export type ChannelIdentity = typeof channelIdentities.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Showing = typeof showings.$inferSelect;
 export type MlsBooking = typeof mlsBookings.$inferSelect;
+export type Tour = typeof tours.$inferSelect;
 export type Offer = typeof offers.$inferSelect;
 export type Job = typeof jobs.$inferSelect;

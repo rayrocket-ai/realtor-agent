@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { config } from "../../config.js";
 import { db, schema } from "../../db/client.js";
 import { createBookingRequest } from "../../booking/service.js";
+import { createTourRequest } from "../../booking/tours.js";
 import { parseBookingMessage, BookingMessageError } from "./parse.js";
 import { getMe, getUpdates, sendMessage, type TgMessage, type TgUpdate } from "./client.js";
 
@@ -37,13 +38,112 @@ function isAllowed(chatId: number): boolean {
 }
 
 const HELP =
-  "Send me a property address and a time and I'll book the showing on BrokerBay.\n\n" +
-  "Examples:\n" +
+  "Send me addresses or MLS numbers and a time — I'll book the showings on BrokerBay.\n\n" +
+  "One home:\n" +
   "• 16 Curry Cres tomorrow 5pm\n" +
-  "• 36 Example Ave, Toronto sat 1:30pm\n" +
-  "• 12 King St W 2026-07-08 14:00 for 45 min\n" +
-  "• add “dry run” to stop before the final submit\n\n" +
-  "Commands: /help, /whoami";
+  "• W13503106 tomorrow 6pm\n" +
+  "• 12 King St W 2026-07-08 14:00 for 45 min\n\n" +
+  "A tour (several homes, one start time — I order them by driving distance and book back-to-back):\n" +
+  "• W13503106 C5877233 tomorrow 6pm\n" +
+  "• one listing per line, time on the last line\n\n" +
+  "Extras: add “dry run” to stop before submitting · “cancel” to cancel what's still pending\n" +
+  "Commands: /status, /cancel, /help, /whoami";
+
+function fmtLocal(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: config().TZ,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d);
+}
+
+const STATUS_EMOJI: Record<string, string> = {
+  pending: "⏳",
+  running: "🔄",
+  submitted: "📨",
+  confirmed: "✅",
+  needs_attention: "⚠️",
+  failed: "❌",
+  dry_run: "🧪",
+  cancelled: "🚫",
+};
+
+async function sendStatus(chatId: number): Promise<void> {
+  const rows = await db().query.mlsBookings.findMany({
+    orderBy: desc(schema.mlsBookings.createdAt),
+    limit: 8,
+  });
+  if (!rows.length) {
+    await sendMessage(chatId, "No bookings yet. Send me an address and a time to make one.");
+    return;
+  }
+  const lines = rows.map((b) => {
+    const tour = b.tourId ? ` (tour stop ${b.tourStop})` : "";
+    return `${STATUS_EMOJI[b.status] ?? "•"} ${b.matchedAddress ?? b.address}${tour}\n    ${fmtLocal(b.requestedStart)} · ${b.durationMin} min · ${b.status}`;
+  });
+  await sendMessage(chatId, `Recent bookings:\n\n${lines.join("\n")}`);
+}
+
+/**
+ * Cancel everything still pending that this chat started: queued bookings and
+ * un-planned tours. Running/submitted ones can't be safely stopped — reported.
+ */
+async function cancelPending(chatId: number): Promise<void> {
+  const d = db();
+  const chat = String(chatId);
+
+  const pendingBookings = await d.query.mlsBookings.findMany({
+    where: and(eq(schema.mlsBookings.notifyTelegramChatId, chat), eq(schema.mlsBookings.status, "pending")),
+  });
+  if (pendingBookings.length) {
+    const ids = pendingBookings.map((b) => b.id);
+    await d
+      .update(schema.mlsBookings)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(inArray(schema.mlsBookings.id, ids));
+    // Drop their queued jobs too so the worker never picks them up.
+    await d.execute(sql`
+      UPDATE jobs SET status = 'cancelled'
+      WHERE status = 'pending' AND dedupe_key IN (${sql.join(ids.map((id) => sql`${`mls-booking:${id}`}`), sql`, `)})
+    `);
+  }
+
+  const activeTours = await d.query.tours.findMany({
+    where: and(eq(schema.tours.notifyTelegramChatId, chat), inArray(schema.tours.status, ["pending", "planning"])),
+  });
+  if (activeTours.length) {
+    const ids = activeTours.map((t) => t.id);
+    await d
+      .update(schema.tours)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(inArray(schema.tours.id, ids));
+    await d.execute(sql`
+      UPDATE jobs SET status = 'cancelled'
+      WHERE status = 'pending' AND dedupe_key IN (${sql.join(ids.map((id) => sql`${`tour-plan:${id}`}`), sql`, `)})
+    `);
+  }
+
+  const busy = await d.query.mlsBookings.findMany({
+    where: and(eq(schema.mlsBookings.notifyTelegramChatId, chat), inArray(schema.mlsBookings.status, ["running", "submitted"])),
+    orderBy: desc(schema.mlsBookings.createdAt),
+    limit: 5,
+  });
+
+  const parts: string[] = [];
+  const cancelled = pendingBookings.length + activeTours.reduce((n, t) => n + t.refs.length, 0);
+  if (cancelled > 0) parts.push(`🚫 Cancelled ${cancelled} pending showing${cancelled === 1 ? "" : "s"}.`);
+  else parts.push("Nothing was still pending to cancel.");
+  if (busy.length) {
+    parts.push(
+      `These were already in flight and need cancelling on BrokerBay (or the dashboard):\n` +
+        busy.map((b) => `• ${b.matchedAddress ?? b.address} — ${fmtLocal(b.requestedStart)} (${b.status})`).join("\n"),
+    );
+  }
+  await sendMessage(chatId, parts.join("\n\n"));
+}
 
 /** Handle one inbound message. Exported for tests. */
 export async function handleMessage(msg: TgMessage): Promise<void> {
@@ -68,16 +168,26 @@ export async function handleMessage(msg: TgMessage): Promise<void> {
     return;
   }
 
-  // Ignore other slash-commands quietly.
-  if (lower.startsWith("/")) return;
-
   if (!isAllowed(chatId)) {
-    await sendMessage(
-      chatId,
-      `This chat isn't authorized to book. Send /whoami and add the ID to TELEGRAM_ALLOWED_CHAT_IDS on the server.`,
-    );
+    if (!lower.startsWith("/")) {
+      await sendMessage(
+        chatId,
+        `This chat isn't authorized to book. Send /whoami and add the ID to TELEGRAM_ALLOWED_CHAT_IDS on the server.`,
+      );
+    }
     return;
   }
+
+  if (lower === "/status" || lower === "status") {
+    await sendStatus(chatId);
+    return;
+  }
+  if (lower === "/cancel" || lower === "cancel") {
+    await cancelPending(chatId);
+    return;
+  }
+  // Ignore other slash-commands quietly.
+  if (lower.startsWith("/")) return;
 
   const c = config();
   let parsed;
@@ -101,8 +211,27 @@ export async function handleMessage(msg: TgMessage): Promise<void> {
   }
 
   const durationMin = parsed.durationMin ?? c.BOOKING_DEFAULT_DURATION_MIN;
+
+  if (parsed.refs.length > 1) {
+    const tour = await createTourRequest({
+      refs: parsed.refs,
+      requestedStart: parsed.start,
+      durationMin,
+      source: "telegram",
+      dryRun: parsed.dryRun || undefined,
+      telegramChatId: String(chatId),
+    });
+    await sendMessage(
+      chatId,
+      `🗺 Planning a ${parsed.refs.length}-home tour starting ${parsed.echo} (${durationMin} min each)${parsed.dryRun ? " — DRY RUN" : ""}.\n` +
+        `I'll order the homes by driving distance, send you the itinerary, then book each one. Reply “cancel” to stop it.`,
+    );
+    console.log(`[telegram] queued tour ${tour.id.slice(0, 8)} (${parsed.refs.length} stops) for chat ${chatId}`);
+    return;
+  }
+
   const booking = await createBookingRequest({
-    address: parsed.address,
+    address: parsed.refs[0]!,
     requestedStart: parsed.start,
     durationMin,
     source: "telegram",
@@ -112,8 +241,8 @@ export async function handleMessage(msg: TgMessage): Promise<void> {
 
   await sendMessage(
     chatId,
-    `📅 On it — booking ${parsed.address} for ${parsed.echo} (${durationMin} min)${parsed.dryRun ? " — DRY RUN, I'll stop before submitting" : ""}.\n` +
-      `I'll message you here as soon as it's done.`,
+    `📅 On it — booking ${parsed.refs[0]} for ${parsed.echo} (${durationMin} min)${parsed.dryRun ? " — DRY RUN, I'll stop before submitting" : ""}.\n` +
+      `I'll message you here as soon as it's done. Reply “cancel” if you need to stop it.`,
   );
   console.log(`[telegram] queued booking ${booking.id.slice(0, 8)} for chat ${chatId}`);
 }
