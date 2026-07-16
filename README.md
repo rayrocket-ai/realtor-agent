@@ -14,6 +14,38 @@ Built for a solo agent running everything on one small server (e.g. a Hetzner VP
 - **Escalates to you** — legal/financing questions, upset leads, or "can I talk to Ray?" pause the AI and email you immediately.
 - **Dashboard** — a simple password-protected page at `/admin`: all leads, full timelines, pending offers (edit + approve), showings, manual takeover.
 
+## Quick start — Telegram bookings only, no domain (~10 min)
+
+If all you want is to book showings by messaging a Telegram bot, you don't need a domain, HTTPS, or the Gmail/Boosend/Anthropic setup. One server, one paste:
+
+1. **Make a server:** Hetzner Cloud → your project → **Create Server** → Ubuntu 24.04, type **CX22**. Under **SSH keys** just skip it — Hetzner emails you the root password. Create.
+2. **Make a Telegram bot:** in Telegram open **@BotFather** → `/newbot` → copy the token (looks like `123456:ABC…`).
+3. **Open the server's console** (Hetzner server page → **Console** button, top-right) and log in as `root` with the emailed password. Paste this, filling in your three values:
+
+   ```bash
+   apt-get update && apt-get install -y git
+   git clone -b claude/realm-booking-agent-goocdx https://github.com/rayrocket-ai/realtor-agent.git /opt/realtor-agent
+   cd /opt/realtor-agent
+   REALM_USERNAME='YOUR_TRREB_NUMBER' \
+   REALM_PASSWORD='YOUR_PIN' \
+   TELEGRAM_BOT_TOKEN='YOUR_BOTFATHER_TOKEN' \
+   bash scripts/quickstart.sh
+   ```
+
+   (If the `git clone` asks for a username/password, the repo is private — use a GitHub username + a [personal access token](https://github.com/settings/tokens) as the password.)
+
+4. When it finishes it prints your dashboard URL + password. **Message your bot `/whoami`**, then:
+
+   ```bash
+   nano .env      # set TELEGRAM_ALLOWED_CHAT_IDS=<the id the bot gave you>
+   docker compose -f docker-compose.notls.yml up -d
+   docker compose -f docker-compose.notls.yml exec app npm run booking:login   # one-time PropTx sign-in
+   ```
+
+5. Message the bot: `16 Curry Cres tomorrow 5pm` (or several homes for a distance-ordered tour). Done.
+
+For the full assistant (email/WhatsApp lead handling, offers, a proper domain with HTTPS), use the longer setup below.
+
 ## Setup (about 30 minutes)
 
 ### 0. What you need

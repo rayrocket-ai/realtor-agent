@@ -1,0 +1,44 @@
+# No-TLS / no-domain deployment: just the app + database, no Caddy.
+# For running the Telegram booking bot + dashboard on a bare server IP.
+# The Telegram bot is outbound-only (long-polling), so it needs no domain,
+# no open inbound ports beyond the dashboard, and no HTTPS.
+#
+#   docker compose -f docker-compose.notls.yml up -d --build
+#
+# Dashboard is then at http://SERVER_IP/admin  (basic-auth from .env).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TZ:-America/Toronto}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/realtor
+      BOOKING_DATA_DIR: /app/data/booking
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "80:3000"
+    # Chromium (BrokerBay bookings) needs a real /dev/shm
+    shm_size: "1gb"
+    volumes:
+      # persists the BrokerBay/PropTx login session + booking screenshots
+      - ./data:/app/data
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: realtor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d realtor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
