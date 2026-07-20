@@ -12,7 +12,7 @@ import {
 } from "../../approvals/messages.js";
 import { escapeHtml as esc } from "./approvals.js";
 
-function layout(title: string, body: string): string {
+export function layout(title: string, body: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} — realtor-agent</title>
@@ -33,13 +33,13 @@ function layout(title: string, body: string): string {
   .muted{color:#6b7280;font-size:13px}
   form.inline{display:inline}
 </style></head><body>
-<nav><a href="/admin">Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/activity">Activity</a></nav>
+<nav><a href="/admin">Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/videos">Videos</a><a href="/admin/activity">Activity</a></nav>
 <h2>${esc(title)}</h2>
 ${body}
 </body></html>`;
 }
 
-function fmt(d: Date | null): string {
+export function fmt(d: Date | null): string {
   if (!d) return "";
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: config().TZ,

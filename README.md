@@ -12,6 +12,7 @@ Built for a solo agent running everything on one small server (e.g. a Hetzner VP
 - **Knows when to shut up** — if you reply to a lead yourself (from Gmail or the Boosend console), the assistant pauses on that lead for 4 hours. You can also pause any lead permanently from the dashboard.
 - **Escalates to you** — legal/financing questions, upset leads, or "can I talk to Ray?" pause the AI and email you immediately.
 - **Dashboard** — a simple password-protected page at `/admin`: all leads, full timelines, pending offers (edit + approve), showings, manual takeover.
+- **Video tracker** — `/admin/videos`: track every video you shoot through the pipeline (Shot → Editing → Edited → Posted), log where each one got published (platform, link, caption, date), and record views/likes/comments per post. The analytics page (`/admin/videos/analytics`) shows totals by platform, engagement rates, and your top videos, so you can see what content works.
 
 ## Setup (about 30 minutes)
 

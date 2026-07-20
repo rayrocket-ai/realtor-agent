@@ -7,6 +7,7 @@ import { healthRoutes } from "./routes/health.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { approvalRoutes, messageApprovalRoutes } from "./routes/approvals.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { videoRoutes } from "./routes/videos.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const c = config();
@@ -30,6 +31,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(approvalRoutes);
   await app.register(messageApprovalRoutes);
   await app.register(dashboardRoutes, { prefix: "/admin" });
+  await app.register(videoRoutes, { prefix: "/admin/videos" });
 
   return app;
 }

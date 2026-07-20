@@ -218,6 +218,43 @@ export const agentRuns = pgTable("agent_runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const videos = pgTable(
+  "videos",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    category: text("category").notNull().default("other"), // listing_tour|market_update|tips_advice|behind_the_scenes|client_story|neighborhood|other
+    status: text("status").notNull().default("shot"), // shot|editing|edited|posted
+    shotAt: timestamp("shot_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("videos_status_idx").on(t.status)],
+);
+
+export const videoPosts = pgTable(
+  "video_posts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    videoId: uuid("video_id")
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(), // instagram_reels|tiktok|youtube|youtube_shorts|facebook|x|linkedin
+    url: text("url"),
+    caption: text("caption"),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+    views: integer("views").notNull().default(0),
+    likes: integer("likes").notNull().default(0),
+    comments: integer("comments").notNull().default(0),
+    shares: integer("shares").notNull().default(0),
+    saves: integer("saves").notNull().default(0),
+    statsUpdatedAt: timestamp("stats_updated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("video_posts_video_idx").on(t.videoId)],
+);
+
 export const appState = pgTable("app_state", {
   key: text("key").primaryKey(),
   value: jsonb("value").$type<unknown>(),
@@ -235,3 +272,5 @@ export type Message = typeof messages.$inferSelect;
 export type Showing = typeof showings.$inferSelect;
 export type Offer = typeof offers.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
+export type Video = typeof videos.$inferSelect;
+export type VideoPost = typeof videoPosts.$inferSelect;
