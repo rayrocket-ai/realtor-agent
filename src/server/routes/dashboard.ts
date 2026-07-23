@@ -11,6 +11,7 @@ import {
   rejectPendingMessage,
 } from "../../approvals/messages.js";
 import { escapeHtml as esc } from "./approvals.js";
+import { labelAnswer } from "../../leads/qualify.js";
 
 function layout(title: string, body: string): string {
   return `<!doctype html>
@@ -24,6 +25,7 @@ function layout(title: string, body: string): string {
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#e5e7eb}
   .pill.offer_sent,.pill.approved_sent{background:#dcfce7}.pill.pending_approval{background:#fef9c3}
   .pill.rejected,.pill.lost{background:#fee2e2}.pill.paused{background:#fee2e2}
+  .pill.hot{background:#fecaca}.pill.warm{background:#fef9c3}.pill.cold{background:#dbeafe}
   .msg{padding:8px 12px;border-radius:8px;margin:6px 0;max-width:80%;white-space:pre-wrap;font-size:14px}
   .inbound{background:#f3f4f6}.outbound{background:#dbeafe;margin-left:auto}.internal_note{background:#fef9c3;font-style:italic}
   .btn{display:inline-block;padding:6px 14px;border-radius:6px;border:none;font-weight:600;cursor:pointer;font-size:14px}
@@ -33,7 +35,7 @@ function layout(title: string, body: string): string {
   .muted{color:#6b7280;font-size:13px}
   form.inline{display:inline}
 </style></head><body>
-<nav><a href="/admin">Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/activity">Activity</a></nav>
+<nav><a href="/admin">Leads</a><a href="/admin/social">Social Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/activity">Activity</a></nav>
 <h2>${esc(title)}</h2>
 ${body}
 </body></html>`;
@@ -69,6 +71,43 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     </table>${rows.length === 0 ? '<p class="muted">No leads yet. They appear automatically when someone emails or messages you.</p>' : ""}`;
     reply.type("text/html");
     return layout("Leads", body);
+  });
+
+  app.get("/social", async (_req, reply) => {
+    const d = db();
+    const rows = await d.query.leadSubmissions.findMany({
+      orderBy: desc(schema.leadSubmissions.createdAt),
+      limit: 100,
+    });
+    const leadsById = new Map((await d.query.leads.findMany()).map((l) => [l.id, l] as const));
+    const shareUrl = `${config().APP_BASE_URL}/connect`;
+    const body = `<p class="muted">Share this link on your social media profiles: <strong>${esc(shareUrl)}</strong>
+      — add <code>?src=instagram</code> / <code>?src=tiktok</code> to see where each lead came from,
+      and <code>?lang=prs</code> to open in Dari by default.</p>
+      <table><tr><th>When</th><th>Lead</th><th>Intent</th><th>Score</th><th>Lang</th><th>Answers</th><th>Source</th></tr>
+      ${rows
+        .map((s) => {
+          const lead = leadsById.get(s.leadId);
+          const answers = Object.entries(s.answers ?? {})
+            .map(([k, v]) => {
+              const { label, value } = labelAnswer(k, v);
+              return `${esc(label)}: ${esc(value.length > 80 ? `${value.slice(0, 80)}…` : value)}`;
+            })
+            .join("<br>");
+          return `<tr>
+            <td>${fmt(s.createdAt)}</td>
+            <td><a href="/admin/leads/${s.leadId}">${esc(lead?.name ?? lead?.email ?? lead?.phone ?? "lead")}</a><br>
+              <span class="muted">${esc(lead?.phone ?? "")} ${esc(lead?.email ?? "")}</span></td>
+            <td><span class="pill">${esc(s.intent)}</span></td>
+            <td><span class="pill ${s.score}">${esc(s.score)}</span></td>
+            <td>${s.language === "prs" ? "دری" : "EN"}</td>
+            <td class="muted">${answers || "—"}</td>
+            <td class="muted">${esc(s.source ?? "")}</td></tr>`;
+        })
+        .join("")}
+      </table>${rows.length === 0 ? '<p class="muted">No form submissions yet. Put the link above in your Instagram/TikTok bio to start collecting leads.</p>' : ""}`;
+    reply.type("text/html");
+    return layout("Social media leads", body);
   });
 
   app.get<{ Params: { id: string } }>("/leads/:id", async (req, reply) => {
