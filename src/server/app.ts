@@ -7,6 +7,7 @@ import { healthRoutes } from "./routes/health.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { approvalRoutes, messageApprovalRoutes } from "./routes/approvals.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { publicLeadRoutes } from "./routes/public-lead.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const c = config();
@@ -26,6 +27,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(healthRoutes);
+  await app.register(publicLeadRoutes);
   await app.register(webhookRoutes);
   await app.register(approvalRoutes);
   await app.register(messageApprovalRoutes);

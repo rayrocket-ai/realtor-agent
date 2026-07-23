@@ -183,6 +183,24 @@ export const offers = pgTable("offers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Lead-capture form submissions from the public /connect page (social media bio link).
+export const leadSubmissions = pgTable(
+  "lead_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    intent: text("intent").notNull(), // buying|selling|general
+    language: text("language").notNull().default("en"), // en|prs (Dari)
+    score: text("score").notNull().default("warm"), // hot|warm|cold
+    answers: jsonb("answers").$type<Record<string, string>>().notNull().default({}),
+    source: text("source"), // ?src= tag on the shared link, e.g. instagram|tiktok
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_submissions_lead_idx").on(t.leadId)],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -231,6 +249,7 @@ export type Lesson = typeof lessons.$inferSelect;
 export type Listing = typeof listings.$inferSelect;
 export type ListingShowing = typeof listingShowings.$inferSelect;
 export type ChannelIdentity = typeof channelIdentities.$inferSelect;
+export type LeadSubmission = typeof leadSubmissions.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Showing = typeof showings.$inferSelect;
 export type Offer = typeof offers.$inferSelect;

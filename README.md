@@ -12,6 +12,7 @@ Built for a solo agent running everything on one small server (e.g. a Hetzner VP
 - **Knows when to shut up** — if you reply to a lead yourself (from Gmail or the Boosend console), the assistant pauses on that lead for 4 hours. You can also pause any lead permanently from the dashboard.
 - **Escalates to you** — legal/financing questions, upset leads, or "can I talk to Ray?" pause the AI and email you immediately.
 - **Dashboard** — a simple password-protected page at `/admin`: all leads, full timelines, pending offers (edit + approve), showings, manual takeover.
+- **Social media lead capture** — a public page at `/connect` you put in your Instagram/TikTok bio. Viewers pick *buying / selling / general question*, answer a few qualifying questions (timeline, pre-approval, budget…), and leave their contact info — in **English or Dari (دری)** via a toggle. Every submission is auto-scored hot/warm/cold, emailed to you, and lands on the dashboard; leads who leave an email get picked up by the AI assistant automatically (in their chosen language).
 
 ## Setup (about 30 minutes)
 
@@ -60,6 +61,14 @@ If replies fail, your Boosend plan may use a different send endpoint — the one
 By default (`GMAIL_MODE=label`) the assistant only handles email threads you label **AI-Handle** in Gmail — create that label and drag lead threads onto it. Safe way to start.
 
 When you trust it, set `GMAIL_MODE=all` in `.env` and run `bash scripts/deploy.sh` — it will then pick up any new inbound email that looks like a lead (newsletters, no-replys, and mailing lists are filtered out).
+
+### 4. Put your lead-capture link in your social media bios
+
+Share `https://YOUR_DOMAIN/connect` as the link in your Instagram/TikTok/Facebook bio.
+
+- Tag each platform to see where leads come from: `/connect?src=instagram`, `/connect?src=tiktok`, …
+- Open in Dari by default for a Dari-speaking audience: `/connect?lang=prs` (viewers can always switch with the toggle).
+- Submissions appear under **Social Leads** on the dashboard, auto-scored hot/warm/cold, and you get an email for each one. Leads who leave an email address flow straight into the AI assistant's normal follow-up (subject to the same approval mode as everything else); phone-only leads are flagged for you to follow up on WhatsApp.
 
 ## Day-to-day
 
