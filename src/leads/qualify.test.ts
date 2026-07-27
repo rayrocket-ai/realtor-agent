@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSummary, scoreSubmission, submissionSchema } from "./qualify.js";
+import { buildSummary, nurtureDelayDays, scoreSubmission, submissionSchema } from "./qualify.js";
 
 const base = { name: "Ahmad Wali", phone: "+1 416 555 0100" };
 
@@ -68,6 +68,16 @@ describe("scoreSubmission", () => {
 
   it("general inquiries default to warm", () => {
     expect(scoreSubmission(sub("general", {}))).toBe("warm");
+  });
+});
+
+describe("nurtureDelayDays", () => {
+  it("checks in faster the hotter the lead", () => {
+    expect(nurtureDelayDays("hot")).toBe(1);
+    expect(nurtureDelayDays("warm")).toBe(3);
+    expect(nurtureDelayDays("cold")).toBe(7);
+    expect(nurtureDelayDays("hot")).toBeLessThan(nurtureDelayDays("warm"));
+    expect(nurtureDelayDays("warm")).toBeLessThan(nurtureDelayDays("cold"));
   });
 });
 

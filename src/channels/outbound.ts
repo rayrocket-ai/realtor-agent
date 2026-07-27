@@ -17,7 +17,22 @@ export async function sendToLead(lead: Lead, text: string): Promise<void> {
     where: and(eq(schema.messages.leadId, lead.id), eq(schema.messages.direction, "inbound")),
     orderBy: desc(schema.messages.createdAt),
   });
-  const channel = lastInbound?.channel ?? "gmail";
+  let channel = lastInbound?.channel ?? "gmail";
+
+  // The public lead form is not a messageable channel: fall back to email
+  // when the lead left one, otherwise this lead can only be reached manually.
+  if (channel === "webform") {
+    if (!lead.email) {
+      throw new Error(
+        `Lead ${lead.id} came from the web form with no email — reach out by phone/WhatsApp instead.`,
+      );
+    }
+    channel = "gmail";
+    await d
+      .insert(schema.channelIdentities)
+      .values({ leadId: lead.id, channel: "gmail", externalId: lead.email })
+      .onConflictDoNothing();
+  }
 
   const identity = await d.query.channelIdentities.findFirst({
     where: and(
@@ -70,4 +85,16 @@ export async function sendToLead(lead: Lead, text: string): Promise<void> {
     body: text,
     externalMsgId,
   });
+}
+
+/**
+ * Whether sendToLead has any channel it could deliver on. False for e.g.
+ * phone-only web-form leads, who can only be contacted manually.
+ */
+export async function leadReachable(lead: Lead): Promise<boolean> {
+  if (lead.email) return true;
+  const identities = await db().query.channelIdentities.findMany({
+    where: eq(schema.channelIdentities.leadId, lead.id),
+  });
+  return identities.some((i) => i.channel !== "webform");
 }
