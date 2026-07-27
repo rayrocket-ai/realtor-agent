@@ -61,6 +61,11 @@ export function scoreSubmission(s: SubmissionInput): Score {
   return "warm";
 }
 
+/** Days until the first automatic nurture check-in, by qualification. */
+export function nurtureDelayDays(score: Score): number {
+  return score === "hot" ? 1 : score === "warm" ? 3 : 7;
+}
+
 const LABELS: Record<string, string> = {
   timeline: "Timeline",
   preapproved: "Mortgage pre-approval",

@@ -5,7 +5,7 @@ import { db, schema } from "../../db/client.js";
 import { config } from "../../config.js";
 import { enqueue } from "../../jobs/queue.js";
 import { ingestInbound, resolveLead } from "../../channels/ingest.js";
-import { buildSummary, scoreSubmission, submissionSchema } from "../../leads/qualify.js";
+import { buildSummary, nurtureDelayDays, scoreSubmission, submissionSchema } from "../../leads/qualify.js";
 
 // Simple per-IP throttle so the public form can't be spammed into the lead DB.
 const RATE_LIMIT = 10;
@@ -112,7 +112,10 @@ export async function publicLeadRoutes(app: FastifyInstance): Promise<void> {
       })
       .returning({ id: schema.leadSubmissions.id });
 
-    // Merge the qualification into the lead profile the agent already reads.
+    // Merge the qualification into the lead profile the agent already reads,
+    // and book the first nurture check-in so every form lead stays in the
+    // follow-up loop even if the agent never schedules one itself.
+    const followupAt = new Date(Date.now() + nurtureDelayDays(score) * 24 * 3600_000);
     const lead = await d.query.leads.findFirst({ where: eq(schema.leads.id, leadId) });
     if (lead) {
       await d
@@ -126,10 +129,24 @@ export async function publicLeadRoutes(app: FastifyInstance): Promise<void> {
             ...(s.contactMethod ? { preferred_contact: s.contactMethod } : {}),
             ...s.answers,
           },
+          followupAt: lead.followupAt ?? followupAt,
           updatedAt: new Date(),
         })
         .where(eq(schema.leads.id, leadId));
     }
+    // Same dedupe key as the agent's set_followup tool: only one pending
+    // follow-up per lead, whoever schedules it first.
+    await enqueue({
+      type: "followup",
+      payload: {
+        leadId,
+        reason:
+          `Nurture check-in for a ${score.toUpperCase()} ${s.intent} lead from the social lead form. ` +
+          `If the lead already replied and the conversation is active, this check-in may be unnecessary — output nothing in that case.`,
+      },
+      runAt: followupAt,
+      dedupeKey: `followup:${leadId}`,
+    });
 
     const c = config();
     await enqueue({
