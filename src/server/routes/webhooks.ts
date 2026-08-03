@@ -3,7 +3,25 @@ import crypto from "node:crypto";
 import { config } from "../../config.js";
 import { normalizeBoosendWebhook } from "../../channels/boosend/inbound.js";
 import { normalizeTelegramUpdate } from "../../channels/telegram/inbound.js";
-import { ingestInbound } from "../../channels/ingest.js";
+import { ingestInbound, resolveLead } from "../../channels/ingest.js";
+import { db, schema } from "../../db/client.js";
+import { enqueue } from "../../jobs/queue.js";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+
+const voiceIntakeSchema = z.object({
+  conversation_id: z.string().trim().min(1).max(200),
+  caller_name: z.string().trim().min(1).max(160),
+  callback_number: z.string().trim().min(7).max(40),
+  email: z.string().trim().email().max(254).optional().or(z.literal("")),
+  caller_type: z.enum(["buyer", "seller", "landlord", "tenant", "existing_client", "other_agent", "vendor", "general"]),
+  reason_summary: z.string().trim().min(3).max(3000),
+  property_or_area: z.string().trim().max(500).optional().default(""),
+  timeline: z.string().trim().max(300).optional().default(""),
+  urgency: z.enum(["red", "yellow", "green"]),
+  best_callback_time: z.string().trim().max(300).optional().default(""),
+  language: z.enum(["English", "Dari"]).default("English"),
+});
 
 export async function webhookRoutes(app: FastifyInstance): Promise<void> {
   // Keep the raw body for HMAC verification.
@@ -84,6 +102,89 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.send({ ok: true, leadId: result.leadId, stored: result.stored });
+  });
+
+  // ElevenLabs calls this tool once the caller's identity, reason, and callback
+  // details have been confirmed. It writes a durable CRM timeline entry and
+  // alerts Ray; it never initiates outreach or claims an appointment was made.
+  app.post("/webhooks/elevenlabs/capture-lead", async (req, reply) => {
+    const c = config();
+    if (!c.ELEVENLABS_WEBHOOK_SECRET) {
+      return reply.status(404).send({ ok: false, error: "voice intake is not configured" });
+    }
+    const provided = String(req.headers["x-voice-webhook-secret"] ?? "");
+    if (!safeEq(provided, c.ELEVENLABS_WEBHOOK_SECRET)) {
+      return reply.status(401).send({ ok: false, error: "invalid secret" });
+    }
+    const parsed = voiceIntakeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.issues[0]?.message ?? "invalid voice intake",
+      });
+    }
+    const input = parsed.data;
+    const summary = [
+      `Voice front desk — ${input.urgency.toUpperCase()} ${input.caller_type.replaceAll("_", " ")}`,
+      `Caller: ${input.caller_name}`,
+      `Callback: ${input.callback_number}`,
+      input.email ? `Email: ${input.email}` : "",
+      `Reason: ${input.reason_summary}`,
+      input.property_or_area ? `Property/area: ${input.property_or_area}` : "",
+      input.timeline ? `Timeline: ${input.timeline}` : "",
+      input.best_callback_time ? `Best callback time: ${input.best_callback_time}` : "",
+      `Language: ${input.language}`,
+    ].filter(Boolean).join("\n");
+    const lead = await resolveLead({
+      channel: "voice",
+      externalId: input.callback_number,
+      threadRef: input.conversation_id,
+      name: input.caller_name,
+      email: input.email || null,
+      phone: input.callback_number,
+      body: summary,
+    });
+    const inserted = await db().insert(schema.messages).values({
+      leadId: lead.id,
+      channel: "voice",
+      direction: "inbound",
+      body: summary,
+      externalMsgId: `elevenlabs:${input.conversation_id}`,
+      meta: {
+        source: "elevenlabs_front_desk",
+        urgency: input.urgency,
+        callerType: input.caller_type,
+        language: input.language,
+      },
+    }).onConflictDoNothing({ target: schema.messages.externalMsgId }).returning({ id: schema.messages.id });
+    if (inserted.length) {
+      await db().update(schema.leads).set({
+        name: lead.name || input.caller_name,
+        email: lead.email || input.email || null,
+        phone: lead.phone || input.callback_number,
+        stage: lead.stage === "new" ? "engaged" : lead.stage,
+        notes: [lead.notes, summary].filter(Boolean).join("\n\n"),
+        updatedAt: new Date(),
+      }).where(eq(schema.leads.id, lead.id));
+      if (input.urgency !== "green") {
+        await enqueue({
+          type: "notify-realtor",
+          payload: {
+            subject: `[${input.urgency.toUpperCase()}] Voice front desk — ${input.caller_name}`,
+            body: `${summary}\n\nOpen: ${c.APP_BASE_URL}/admin/leads/${lead.id}`,
+          },
+          dedupeKey: `voice-intake:${input.conversation_id}`,
+        });
+      }
+    }
+    return reply.send({
+      ok: true,
+      stored: inserted.length > 0,
+      lead_id: lead.id,
+      message: input.urgency === "red"
+        ? "The urgent message was saved and Ray was alerted."
+        : "The caller details and message were saved for Ray.",
+    });
   });
 }
 

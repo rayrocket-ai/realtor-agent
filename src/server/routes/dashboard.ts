@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { asc, desc, eq } from "drizzle-orm";
-import { db, schema } from "../../db/client.js";
+import { db, pgPool, schema } from "../../db/client.js";
 import { config } from "../../config.js";
 import { approveOffer, rejectOffer } from "../../offers/approval.js";
 import { sendToLead } from "../../channels/outbound.js";
@@ -12,32 +12,76 @@ import {
 } from "../../approvals/messages.js";
 import { escapeHtml as esc } from "./approvals.js";
 import { labelAnswer } from "../../leads/qualify.js";
+import { requireDashboardSession } from "./dashboard-auth.js";
 
 function layout(title: string, body: string): string {
+  const descriptions: Record<string, string> = {
+    Today: "The decisions, deadlines, relationships, and system signals that need attention now.",
+    Leads: "Every relationship, conversation, and next action in one place.",
+    "Social media leads": "Capture and qualify inbound opportunities from every social channel.",
+    Approvals: "Review what Ali plans to send before it reaches a client.",
+    Offers: "Prepare, review, and send offer communication with a human checkpoint.",
+    Showings: "Track property appointments and their current booking state.",
+    Tours: "Coordinate multi-property days, timing, and itineraries.",
+    "Listing feedback pipeline": "Turn every showing into structured seller feedback and follow-up.",
+    "My Listings": "Manage active inventory and connect BrokerBay feedback workflows.",
+    "Agent activity": "A traceable record of what the agent did, used, and produced.",
+    "Voice Operations": "Test Ali, review calls, and follow every voice conversation into the CRM.",
+    "Learning & notes": "Visible, reversible instructions distilled from your explicit feedback.",
+    "Systems & dashboards": "Connection health and specialist consoles across the platform.",
+  };
+  const description = descriptions[title] ?? "Ray Ahmadi Real Estate operations and intelligence.";
   return `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} — realtor-agent</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>${esc(title)} — Ray Central Command</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("ray-theme")||"light"}catch(e){}</script>
 <style>
-  body{font-family:-apple-system,system-ui,sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#1a1a1a}
-  nav a{margin-right:16px;text-decoration:none;color:#2563eb;font-weight:600}
-  table{border-collapse:collapse;width:100%;font-size:14px}
-  th,td{text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top}
-  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:#e5e7eb}
-  .pill.offer_sent,.pill.approved_sent{background:#dcfce7}.pill.pending_approval{background:#fef9c3}
-  .pill.rejected,.pill.lost{background:#fee2e2}.pill.paused{background:#fee2e2}
-  .pill.hot{background:#fecaca}.pill.warm{background:#fef9c3}.pill.cold{background:#dbeafe}
-  .msg{padding:8px 12px;border-radius:8px;margin:6px 0;max-width:80%;white-space:pre-wrap;font-size:14px}
-  .inbound{background:#f3f4f6}.outbound{background:#dbeafe;margin-left:auto}.internal_note{background:#fef9c3;font-style:italic}
-  .btn{display:inline-block;padding:6px 14px;border-radius:6px;border:none;font-weight:600;cursor:pointer;font-size:14px}
-  .approve{background:#16a34a;color:#fff}.reject{background:#dc2626;color:#fff}.neutral{background:#e5e7eb}
-  textarea,input[type=text],input[type=email]{width:100%;padding:6px;font-size:14px;box-sizing:border-box}
-  pre{white-space:pre-wrap;background:#f5f5f4;padding:12px;border-radius:8px;font-size:13px}
-  .muted{color:#6b7280;font-size:13px}
-  form.inline{display:inline}
+  :root{--ink:#101828;--ink-soft:#344054;--muted:#667085;--line:#e4e7ec;--blue:#175cd3;--blue-dark:#1849a9;--violet:#7f56d9;--panel:#fff;--panel-soft:#f8fafc;--page:#f4f6f8;--green:#067647;--green-bg:#ecfdf3;--amber:#b54708;--amber-bg:#fffaeb;--red:#b42318;--red-bg:#fef3f2;--shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px rgba(16,24,40,.05)}
+  :root[data-theme="dark"]{--ink:#f2f4f7;--ink-soft:#e4e7ec;--muted:#98a2b3;--line:#344054;--panel:#182230;--panel-soft:#101828;--page:#0c111d;--blue:#84adff;--blue-dark:#b2ccff;--green:#75e0a7;--green-bg:#073d2a;--amber:#fec84b;--amber-bg:#4e2c0c;--red:#fda29b;--red-bg:#55160c;--shadow:none}
+  *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--page);color:var(--ink);font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--blue)}button,input,textarea,select{font:inherit}
+  .app-shell{min-height:100vh;display:grid;grid-template-columns:248px minmax(0,1fr)}
+  .sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;padding:22px 14px 18px;background:#101828;color:#d0d5dd;box-shadow:6px 0 24px rgba(16,24,40,.08);z-index:40}
+  .brand{display:flex;align-items:center;gap:11px;color:#fff;text-decoration:none;padding:0 9px 23px}.brand-mark{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:linear-gradient(145deg,#2e90fa,#7f56d9);font-weight:850;box-shadow:0 8px 22px rgba(46,144,250,.28)}.brand-copy strong{display:block;font-size:14px;letter-spacing:-.01em}.brand-copy span{display:block;color:#98a2b3;font-size:11px;margin-top:1px}
+  .nav-group{margin:0 0 19px}.nav-label{padding:0 10px 7px;color:#667085;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}.nav-link{display:flex;align-items:center;gap:10px;margin:2px 0;padding:9px 10px;border-radius:9px;color:#d0d5dd;text-decoration:none;font-weight:620;font-size:13px;transition:background .15s,color .15s,transform .15s}.nav-link:hover{background:#ffffff0d;color:#fff;transform:translateX(1px)}.nav-link.active{background:linear-gradient(90deg,#ffffff18,#ffffff0c);color:#fff;box-shadow:inset 2px 0 #53b1fd}.nav-icon{display:grid;place-items:center;width:20px;height:20px;color:#98a2b3;font-size:15px}.nav-link.active .nav-icon{color:#84adff}.sidebar-foot{margin-top:24px;padding:14px 10px 4px;border-top:1px solid #344054}.sidebar-status{display:flex;align-items:center;gap:8px;color:#d0d5dd;font-size:11px}.status-dot{width:8px;height:8px;border-radius:50%;background:#12b76a;box-shadow:0 0 0 4px #12b76a20}.sidebar-foot small{display:block;color:#667085;margin-top:7px}
+  .workspace{min-width:0}.topbar{position:sticky;top:0;z-index:30;height:72px;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 34px;background:color-mix(in srgb,var(--page) 88%,transparent);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}.topbar-left,.topbar-actions{display:flex;align-items:center;gap:10px}.breadcrumb{color:var(--muted);font-size:12px}.breadcrumb strong{color:var(--ink-soft)}.mobile-menu{display:none}.icon-button,.top-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink-soft);text-decoration:none;padding:0 11px;font-weight:650;font-size:12px;cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.03)}.icon-button{width:38px;padding:0}.top-action:hover,.icon-button:hover{border-color:#98a2b3}.top-action.primary{background:var(--blue);border-color:var(--blue);color:#fff}.top-action.primary:hover{background:var(--blue-dark)}
+  .page{max-width:1600px;margin:0 auto;padding:31px 36px 60px}.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:24px}.page-head h1{margin:0;color:var(--ink);font-size:30px;line-height:1.15;letter-spacing:-.035em}.page-head p{max-width:720px;margin:7px 0 0;color:var(--muted);font-size:14px}.page-badge{flex:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-soft);font-size:11px;font-weight:700}.content-inner{min-width:0;overflow-x:auto;padding:1px 1px 18px}
+  h2,h3{letter-spacing:-.02em}h2{font-size:23px;margin:28px 0 14px}h3{font-size:17px;margin:27px 0 10px}p{margin:9px 0 14px}
+  table{border-collapse:separate;border-spacing:0;width:100%;min-width:680px;font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,40,.025)}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}th{background:var(--panel-soft);color:var(--muted);font-size:10px;letter-spacing:.075em;text-transform:uppercase;font-weight:800;white-space:nowrap}tr:last-child td{border-bottom:0}tbody tr:hover td{background:color-mix(in srgb,var(--blue) 3%,var(--panel))}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--panel-soft);color:var(--ink-soft);border:1px solid var(--line)}.pill.offer_sent,.pill.approved_sent,.pill.confirmed,.pill.completed,.pill.active,.pill.hot{color:var(--green);background:var(--green-bg);border-color:transparent}.pill.pending_approval,.pill.pending,.pill.warm,.pill.calling,.pill.approved{color:var(--amber);background:var(--amber-bg);border-color:transparent}.pill.rejected,.pill.lost,.pill.paused,.pill.failed,.pill.cancelled,.pill.cold{color:var(--red);background:var(--red-bg);border-color:transparent}
+  .msg{padding:11px 13px;border:1px solid var(--line);border-radius:12px;margin:7px 0;max-width:82%;white-space:pre-wrap;font-size:13px}.inbound{background:var(--panel)}.outbound{background:color-mix(in srgb,var(--blue) 9%,var(--panel));margin-left:auto}.internal_note{background:var(--amber-bg);font-style:italic}
+  .btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:7px 14px;border-radius:9px;border:1px solid transparent;font-weight:700;cursor:pointer;font-size:12px;text-decoration:none;transition:transform .12s,filter .12s}.btn:hover{filter:brightness(.96);transform:translateY(-1px)}.approve{background:var(--blue);color:#fff}.reject{background:var(--red);color:#fff}.neutral{background:var(--panel);color:var(--ink-soft);border-color:var(--line)}
+  textarea,input[type=text],input[type=email],input[type=tel],select{width:100%;min-height:40px;padding:9px 11px;border:1px solid #d0d5dd;border-radius:9px;background:var(--panel);color:var(--ink);font-size:13px;box-sizing:border-box;outline:none}textarea{min-height:110px;resize:vertical}textarea:focus,input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 17%,transparent)}label{color:var(--ink-soft);font-weight:650}form .btn{margin-top:8px}pre{white-space:pre-wrap;background:var(--panel-soft);border:1px solid var(--line);padding:14px;border-radius:11px;font-size:12px;color:var(--ink-soft)}code{padding:2px 5px;border-radius:5px;background:var(--panel-soft);border:1px solid var(--line)}.muted{color:var(--muted);font-size:12px}form.inline{display:inline}.error{padding:12px 14px;border-radius:10px;background:var(--red-bg);color:var(--red);font-weight:650}.outcome{padding:12px 14px;border-radius:10px;background:var(--green-bg);color:var(--green);font-weight:650}
+  .cards,.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}.card,.stat{border:1px solid var(--line);border-radius:16px;padding:18px;background:var(--panel);box-shadow:var(--shadow)}.card{transition:transform .15s,box-shadow .15s}.card:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(16,24,40,.08)}.card h3{margin:0 0 8px}.card p{margin:6px 0}.status{font-weight:750;color:var(--green)}.stat span{display:block;color:var(--muted);font-size:11px}.stat strong{display:block;margin:4px 0;font-size:25px;letter-spacing:-.035em}.attention-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.focus-list{display:grid;gap:9px}.focus-item{display:grid;grid-template-columns:9px 1fr auto;gap:10px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft)}.focus-dot{width:9px;height:9px;margin-top:4px;border-radius:50%;background:var(--amber)}.focus-dot.ready{background:var(--green)}.focus-copy strong,.focus-copy span{display:block}.focus-copy strong{font-size:12px}.focus-copy span{font-size:10px;color:var(--muted);margin-top:2px}.focus-tag{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800}.empty-state{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px;background:var(--panel-soft)}
+  .command-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(260px,.75fr);gap:24px;align-items:end;padding:27px 29px;border-radius:20px;background:linear-gradient(135deg,#101828 0%,#162b52 62%,#312e6f 100%);color:#fff;box-shadow:0 18px 40px rgba(16,24,40,.16)}.command-hero:after{content:"";position:absolute;right:-75px;top:-115px;width:280px;height:280px;border:1px solid #ffffff1f;border-radius:50%;box-shadow:0 0 0 44px #ffffff08,0 0 0 88px #ffffff05}.hero-content,.hero-pulse{position:relative;z-index:1}.hero-kicker{margin:0 0 7px;color:#b2ccff;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.hero-title{margin:0;font-size:30px;line-height:1.12;letter-spacing:-.04em}.hero-copy{max-width:650px;margin:9px 0 0;color:#d0d5dd}.hero-pulse{justify-self:end;min-width:230px;padding:15px 17px;border:1px solid #ffffff24;border-radius:14px;background:#ffffff0d;backdrop-filter:blur(8px)}.pulse-label{color:#b2ccff;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.pulse-value{display:flex;align-items:center;gap:9px;margin-top:5px;font-size:16px;font-weight:760}.pulse-value .status-dot{flex:none}.pulse-detail{margin-top:4px;color:#d0d5dd;font-size:11px}.command-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0 22px}.metric-card{position:relative;min-width:0;padding:17px 18px;border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:var(--shadow)}.metric-top{display:flex;align-items:center;justify-content:space-between;gap:12px}.metric-label{color:var(--muted);font-size:11px;font-weight:700}.metric-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:color-mix(in srgb,var(--blue) 10%,var(--panel));color:var(--blue);font-weight:800}.metric-value{display:block;margin:11px 0 2px;font-size:27px;line-height:1;letter-spacing:-.045em}.metric-foot{color:var(--muted);font-size:10px}.metric-foot.good{color:var(--green)}.metric-foot.attention{color:var(--amber)}.command-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(330px,.85fr);gap:14px;margin-top:14px}.panel{min-width:0;padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:var(--shadow)}.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}.panel-head h2{margin:0;font-size:17px}.panel-head p{margin:3px 0 0;color:var(--muted);font-size:11px}.panel-link{flex:none;font-size:11px;font-weight:750;text-decoration:none}.attention-list{display:grid;gap:9px}.attention-item{display:grid;grid-template-columns:36px 1fr auto;gap:11px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:11px;background:var(--panel-soft);text-decoration:none;color:var(--ink)}.attention-symbol{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--amber-bg);color:var(--amber);font-weight:850}.attention-copy strong,.attention-copy span{display:block}.attention-copy strong{font-size:12px}.attention-copy span{margin-top:1px;color:var(--muted);font-size:10px}.attention-count{font-size:17px;font-weight:800;color:var(--ink)}.pipeline-list{display:grid;gap:13px}.pipeline-row{display:grid;grid-template-columns:118px minmax(0,1fr) 34px;gap:10px;align-items:center}.pipeline-name{font-size:11px;font-weight:700;color:var(--ink-soft)}.pipeline-track{height:8px;overflow:hidden;border-radius:999px;background:var(--panel-soft);border:1px solid var(--line)}.pipeline-fill{height:100%;width:var(--progress);border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--violet))}.pipeline-total{text-align:right;font-size:11px;font-weight:800}.section-row{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:25px 0 11px}.section-row h2{margin:0;font-size:18px}.section-row p{margin:3px 0 0;color:var(--muted);font-size:11px}.lane-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.lane-card{padding:15px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}.lane-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.lane-name{font-size:12px;font-weight:800}.lane-state{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}.lane-value{display:block;margin-top:13px;font-size:22px;letter-spacing:-.04em}.lane-note{display:block;color:var(--muted);font-size:10px}.recent-wrap{margin-top:14px}.recent-wrap table{min-width:620px}
+  .voice-hero{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr);gap:14px;margin-bottom:18px}.voice-widget{min-height:150px;display:grid;place-items:center;margin-top:14px;padding:20px;border:1px dashed var(--line);border-radius:12px;background:var(--panel-soft)}
+  :focus-visible{outline:3px solid color-mix(in srgb,var(--blue) 34%,transparent);outline-offset:2px}.sidebar-backdrop{display:none}
+  @media(max-width:1100px){.command-metrics,.lane-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.command-grid{grid-template-columns:1fr}}
+  @media(max-width:980px){.app-shell{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:264px;transform:translateX(-105%);transition:transform .2s}.sidebar.open{transform:translateX(0)}.sidebar-backdrop.open{display:block;position:fixed;inset:0;background:#10182880;z-index:35}.mobile-menu{display:inline-flex}.page{padding:26px 22px 50px}.topbar{padding:0 22px}.attention-grid,.voice-hero{grid-template-columns:1fr}.command-hero{grid-template-columns:1fr}.hero-pulse{justify-self:start}}
+  @media(max-width:620px){.top-action span{display:none}.page{padding:22px 14px 42px}.topbar{padding:0 14px;height:64px}.page-head{display:block}.page-head h1{font-size:26px}.page-badge{display:inline-flex;margin-top:14px}.cards,.stats,.command-metrics,.lane-grid{grid-template-columns:1fr}.command-hero{padding:23px 20px}.hero-title{font-size:26px}.hero-pulse{min-width:0;width:100%}.msg{max-width:94%}}
+  @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style></head><body>
-<nav><a href="/admin">Leads</a><a href="/admin/social">Social Leads</a><a href="/admin/approvals">Approvals</a><a href="/admin/offers">Offers</a><a href="/admin/showings">Showings</a><a href="/admin/tours">Tours</a><a href="/admin/feedback">Feedback</a><a href="/admin/listings">My Listings</a><a href="/admin/activity">Activity</a></nav>
-<h2>${esc(title)}</h2>
-${body}
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div><div class="app-shell">
+<aside class="sidebar" id="sidebar"><a class="brand" href="/admin"><span class="brand-mark">R</span><span class="brand-copy"><strong>Central Command</strong><span>Ray Ahmadi Real Estate</span></span></a>
+  <nav aria-label="Primary navigation">
+    <div class="nav-group"><div class="nav-label">Command</div>
+      <a class="nav-link" href="/admin"><span class="nav-icon">◫</span>Today</a><a class="nav-link" href="/admin/approvals"><span class="nav-icon">✓</span>Approvals</a>
+    </div>
+    <div class="nav-group"><div class="nav-label">Relationships</div>
+      <a class="nav-link" href="/admin/leads"><span class="nav-icon">◎</span>Leads</a><a class="nav-link" href="/admin/social"><span class="nav-icon">↗</span>Social Media</a>
+    </div>
+    <div class="nav-group"><div class="nav-label">Transactions</div>
+      <a class="nav-link" href="/admin/offers"><span class="nav-icon">◇</span>Offers</a><a class="nav-link" href="/admin/showings"><span class="nav-icon">▣</span>Showings</a><a class="nav-link" href="/admin/tours"><span class="nav-icon">⌘</span>Tours</a><a class="nav-link" href="/admin/feedback"><span class="nav-icon">☆</span>Feedback</a><a class="nav-link" href="/admin/listings"><span class="nav-icon">⌂</span>My Listings</a>
+    </div>
+    <div class="nav-group"><div class="nav-label">Intelligence</div>
+      <a class="nav-link" href="/admin/activity"><span class="nav-icon">≡</span>Activity</a><a class="nav-link" href="/admin/voice"><span class="nav-icon">◉</span>Voice Agent</a><a class="nav-link" href="/admin/learning"><span class="nav-icon">✦</span>Learning</a>
+    </div>
+    <div class="nav-group"><div class="nav-label">Platform</div><a class="nav-link" href="/admin/systems"><span class="nav-icon">⚙</span>Systems</a></div>
+  </nav>
+  <div class="sidebar-foot"><div class="sidebar-status"><span class="status-dot"></span>Central Command online</div><small>Toronto · ${esc(config().TZ)}</small></div>
+</aside>
+<section class="workspace"><header class="topbar"><div class="topbar-left"><button class="icon-button mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation">☰</button><div class="breadcrumb">Operations&nbsp; / &nbsp;<strong>${esc(title)}</strong></div></div><div class="topbar-actions"><button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle theme">◐</button><form method="post" action="/admin/logout"><button class="top-action" type="submit"><span>Sign</span> out</button></form><a class="top-action" href="/ali-dashboard/"><span>Open</span> Ali</a><a class="top-action primary" href="https://homes.rayrealestate.ca/" target="_blank" rel="noreferrer"><span>Property</span> Search ↗</a></div></header>
+<main class="page"><div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(description)}</p></div><div class="page-badge"><span class="status-dot"></span>Live workspace</div></div><div class="content-inner">${body}</div></main></section></div>
+<script>(()=>{const sidebar=document.getElementById("sidebar"),backdrop=document.getElementById("sidebar-backdrop"),menu=document.getElementById("mobile-menu");const close=()=>{sidebar?.classList.remove("open");backdrop?.classList.remove("open")};menu?.addEventListener("click",()=>{sidebar?.classList.toggle("open");backdrop?.classList.toggle("open")});backdrop?.addEventListener("click",close);document.querySelectorAll(".nav-link").forEach(link=>{const href=link.getAttribute("href")||"";const here=location.pathname;const active=href==="/admin"?here==="/admin"||here==="/admin/":here===href||here.startsWith(href+"/");if(active){link.classList.add("active");link.setAttribute("aria-current","page")}});document.getElementById("theme-toggle")?.addEventListener("click",()=>{const next=document.documentElement.dataset.theme==="dark"?"light":"dark";document.documentElement.dataset.theme=next;try{localStorage.setItem("ray-theme",next)}catch(e){}})})();</script>
 </body></html>`;
 }
 
@@ -50,10 +94,140 @@ function fmt(d: Date | null): string {
   }).format(d);
 }
 
+interface VoiceCallRow {
+  id: string;
+  direction: string;
+  from_number: string | null;
+  to_number: string | null;
+  contact_name: string | null;
+  agent_type: string | null;
+  purpose: string;
+  status: string;
+  consent_basis: string;
+  summary: string | null;
+  outcome: string | null;
+  next_action: string | null;
+  error: string | null;
+  created_at: Date;
+}
+
+interface VoiceTaskRow {
+  task_type: string;
+  status: string;
+  notes: string | null;
+  due_at: Date | null;
+}
+
+interface VoiceTranscriptRow {
+  speaker: string;
+  text: string;
+  time_in_call_seconds: number | null;
+}
+
+interface DashboardSummaryRow {
+  active_leads: number;
+  new_this_week: number;
+  untriaged_leads: number;
+  followups_due: number;
+  pending_approvals: number;
+  upcoming_showings: number;
+  active_listings: number;
+  queued_jobs: number;
+  failed_jobs_24h: number;
+}
+
+interface DashboardStageRow {
+  stage: string;
+  total: number;
+}
+
+interface DashboardLeadRow {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  stage: string;
+  updated_at: Date;
+}
+
+function stageLabel(stage: string): string {
+  return stage.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function dashboardDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: config().TZ,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+}
+
 export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
-  app.addHook("onRequest", app.basicAuth);
+  app.addHook("onRequest", requireDashboardSession);
 
   app.get("/", async (_req, reply) => {
+    const pool = pgPool();
+    const [summaryResult, stageResult, recentResult] = await Promise.all([
+      pool.query<DashboardSummaryRow>(`SELECT
+        (SELECT count(*)::int FROM leads WHERE paused = false) AS active_leads,
+        (SELECT count(*)::int FROM leads WHERE created_at >= now() - interval '7 days') AS new_this_week,
+        (SELECT count(*)::int FROM leads WHERE paused = false AND stage = 'new' AND updated_at < now() - interval '48 hours') AS untriaged_leads,
+        (SELECT count(*)::int FROM leads WHERE paused = false AND followup_at IS NOT NULL AND followup_at <= now()) AS followups_due,
+        ((SELECT count(*)::int FROM pending_messages WHERE status = 'pending') +
+         (SELECT count(*)::int FROM offers WHERE status = 'pending_approval'))::int AS pending_approvals,
+        (SELECT count(*)::int FROM showings WHERE starts_at >= now() AND status NOT IN ('cancelled', 'completed')) AS upcoming_showings,
+        (SELECT count(*)::int FROM listings WHERE status = 'active') AS active_listings,
+        (SELECT count(*)::int FROM jobs WHERE status = 'pending') AS queued_jobs,
+        (SELECT count(*)::int FROM jobs WHERE status = 'failed' AND created_at >= now() - interval '24 hours') AS failed_jobs_24h`),
+      pool.query<DashboardStageRow>(`SELECT stage, count(*)::int AS total
+        FROM leads WHERE paused = false GROUP BY stage ORDER BY count(*) DESC, stage ASC`),
+      pool.query<DashboardLeadRow>(`SELECT id, name, email, phone, stage, updated_at
+        FROM leads WHERE paused = false ORDER BY updated_at DESC LIMIT 6`),
+    ]);
+
+    const summary = summaryResult.rows[0] ?? {
+      active_leads: 0,
+      new_this_week: 0,
+      untriaged_leads: 0,
+      followups_due: 0,
+      pending_approvals: 0,
+      upcoming_showings: 0,
+      active_listings: 0,
+      queued_jobs: 0,
+      failed_jobs_24h: 0,
+    };
+    const attentionItems = [
+      summary.pending_approvals > 0
+        ? `<a class="attention-item" href="/admin/approvals"><span class="attention-symbol">✓</span><span class="attention-copy"><strong>Decisions waiting</strong><span>Review drafts and approval-gated actions.</span></span><span class="attention-count">${summary.pending_approvals}</span></a>`
+        : "",
+      summary.followups_due > 0
+        ? `<a class="attention-item" href="/admin/leads"><span class="attention-symbol">↗</span><span class="attention-copy"><strong>Follow-ups due</strong><span>Relationships with a due next action.</span></span><span class="attention-count">${summary.followups_due}</span></a>`
+        : "",
+      summary.untriaged_leads > 0
+        ? `<a class="attention-item" href="/admin/leads"><span class="attention-symbol">!</span><span class="attention-copy"><strong>New leads need triage</strong><span>Still new after 48 hours; review ownership and intent.</span></span><span class="attention-count">${summary.untriaged_leads}</span></a>`
+        : "",
+      summary.failed_jobs_24h > 0
+        ? `<a class="attention-item" href="/admin/activity"><span class="attention-symbol">×</span><span class="attention-copy"><strong>Recent automation failures</strong><span>Failed in the last 24 hours and need review.</span></span><span class="attention-count">${summary.failed_jobs_24h}</span></a>`
+        : "",
+    ].filter(Boolean);
+    const maxStageTotal = Math.max(1, ...stageResult.rows.map((row) => row.total));
+    const pipelineRows = stageResult.rows.map((row) => {
+      const width = Math.max(4, Math.round((row.total / maxStageTotal) * 100));
+      return `<div class="pipeline-row"><span class="pipeline-name">${esc(stageLabel(row.stage))}</span><span class="pipeline-track"><span class="pipeline-fill" style="--progress:${width}%"></span></span><span class="pipeline-total">${row.total}</span></div>`;
+    }).join("");
+    const recentRows = recentResult.rows.map((lead) => `<tr><td><a href="/admin/leads/${lead.id}">${esc(lead.name ?? "Unnamed relationship")}</a></td><td>${esc(lead.email ?? lead.phone ?? "No contact detail")}</td><td><span class="pill ${esc(lead.stage)}">${esc(stageLabel(lead.stage))}</span></td><td>${fmt(lead.updated_at)}</td></tr>`).join("");
+    const systemHealthy = summary.failed_jobs_24h === 0;
+    const body = `<section class="command-hero"><div class="hero-content"><p class="hero-kicker">${esc(dashboardDate())} · Toronto</p><h2 class="hero-title">Good to see you, Ray.</h2><p class="hero-copy">Central Command turns the business into one reviewable operating picture: who needs attention, what is due, what is waiting for approval, and whether the systems behind it are healthy.</p></div><div class="hero-pulse"><span class="pulse-label">Operations pulse</span><div class="pulse-value"><span class="status-dot"></span>${systemHealthy ? "Systems operating normally" : "Review recent failures"}</div><div class="pulse-detail">${summary.queued_jobs} queued job${summary.queued_jobs === 1 ? "" : "s"} · ${summary.failed_jobs_24h} failure${summary.failed_jobs_24h === 1 ? "" : "s"} in 24h</div></div></section>
+      <section class="command-metrics" aria-label="Business snapshot"><div class="metric-card"><div class="metric-top"><span class="metric-label">Active lead records</span><span class="metric-icon">◎</span></div><strong class="metric-value">${summary.active_leads}</strong><span class="metric-foot">${summary.new_this_week} added in the last 7 days</span></div><div class="metric-card"><div class="metric-top"><span class="metric-label">Decisions waiting</span><span class="metric-icon">✓</span></div><strong class="metric-value">${summary.pending_approvals}</strong><span class="metric-foot ${summary.pending_approvals ? "attention" : "good"}">${summary.pending_approvals ? "Human review required" : "Approval queue is clear"}</span></div><div class="metric-card"><div class="metric-top"><span class="metric-label">Upcoming showings</span><span class="metric-icon">▣</span></div><strong class="metric-value">${summary.upcoming_showings}</strong><span class="metric-foot">Confirmed future appointments</span></div><div class="metric-card"><div class="metric-top"><span class="metric-label">Active listings</span><span class="metric-icon">⌂</span></div><strong class="metric-value">${summary.active_listings}</strong><span class="metric-foot">Seller inventory in production</span></div></section>
+      <section class="command-grid"><div class="panel"><div class="panel-head"><div><h2>Needs attention</h2><p>Only conditions that merit a decision or next action.</p></div><a class="panel-link" href="/admin/activity">Open activity →</a></div><div class="attention-list">${attentionItems.join("") || '<div class="empty-state">Nothing urgent is waiting. New work will appear here automatically.</div>'}</div></div><div class="panel"><div class="panel-head"><div><h2>Pipeline snapshot</h2><p>Current active lead records by legacy stage.</p></div><a class="panel-link" href="/admin/leads">View leads →</a></div><div class="pipeline-list">${pipelineRows || '<div class="empty-state">No active leads yet.</div>'}</div></div></section>
+      <div class="section-row"><div><h2>Operating lanes</h2><p>The four business lines the rebuilt OS will manage as concurrent engagements.</p></div></div><section class="lane-grid"><div class="lane-card"><div class="lane-top"><span class="lane-name">Buyer</span><span class="lane-state">Active foundation</span></div><strong class="lane-value">${summary.active_leads}</strong><span class="lane-note">Current lead records; engagement migration comes in Phase 1.</span></div><div class="lane-card"><div class="lane-top"><span class="lane-name">Seller</span><span class="lane-state">Foundation</span></div><strong class="lane-value">${summary.active_listings}</strong><span class="lane-note">Active listings connected to feedback and reporting.</span></div><div class="lane-card"><div class="lane-top"><span class="lane-name">Pre-con</span><span class="lane-state">Planned</span></div><strong class="lane-value">—</strong><span class="lane-note">First-class project, worksheet, allocation, and deadline pipeline.</span></div><div class="lane-card"><div class="lane-top"><span class="lane-name">Recruiting</span><span class="lane-state">Planned</span></div><strong class="lane-value">—</strong><span class="lane-note">Research, conversations, appointments, and onboarding.</span></div></section>
+      <div class="section-row"><div><h2>Recently active relationships</h2><p>The latest people touched by messages, updates, or workflow changes.</p></div><a class="panel-link" href="/admin/leads">View all leads →</a></div><div class="recent-wrap"><table><tr><th>Relationship</th><th>Contact</th><th>Stage</th><th>Last activity</th></tr>${recentRows || '<tr><td colspan="4">No lead activity yet.</td></tr>'}</table></div>`;
+    reply.type("text/html");
+    return layout("Today", body);
+  });
+
+  app.get("/leads", async (_req, reply) => {
     const rows = await db().query.leads.findMany({
       orderBy: desc(schema.leads.updatedAt),
       limit: 100,
@@ -418,6 +592,133 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     </table>`;
     reply.type("text/html");
     return layout("Agent activity", body);
+  });
+
+  app.get<{ Querystring: { call?: string } }>("/voice", async (req, reply) => {
+    const pool = pgPool();
+    const [callsResult, tasksResult] = await Promise.all([
+      pool.query<VoiceCallRow>(`SELECT id, direction, from_number, to_number, contact_name, agent_type, purpose, status,
+        consent_basis, summary, outcome, next_action, error, created_at
+        FROM voice_calls ORDER BY created_at DESC LIMIT 50`),
+      pool.query<VoiceTaskRow>(`SELECT task_type, status, notes, due_at
+        FROM voice_followup_tasks ORDER BY created_at DESC LIMIT 30`),
+    ]);
+    const calls = callsResult.rows;
+    const tasks = tasksResult.rows;
+    const selected = req.query.call ? calls.find((call) => call.id === req.query.call) : calls[0];
+    const transcript = selected
+      ? (await pool.query<VoiceTranscriptRow>(`SELECT speaker, text, time_in_call_seconds
+          FROM voice_transcript_segments WHERE call_id = $1 ORDER BY sequence ASC`, [selected.id])).rows
+      : [];
+    const c = config();
+    const readiness = [
+      ["ElevenLabs API", Boolean(c.ELEVENLABS_API_KEY), "Conversation and call runtime"],
+      ["Ali voice agent", Boolean(c.ELEVENLABS_AGENT_ID), "Inbound receptionist and browser test"],
+      ["Business phone", Boolean(c.ELEVENLABS_PHONE_NUMBER_ID), "Twilio number connected in ElevenLabs"],
+      ["Signed webhook", Boolean(c.ELEVENLABS_WEBHOOK_SECRET), "Lead capture and MLS tools protected"],
+      ["GoHighLevel", c.highLevelEnabled, "CRM context and message continuity"],
+      ["PropTx / VOW", c.mlsEnabled, "Live property facts for approved searches"],
+      ["Outbound calling", c.voiceEnabled, "Operator-authorized call switch"],
+    ] as const;
+    const readyCount = readiness.filter(([, ready]) => ready).length;
+    const completed = calls.filter((call) => call.status === "completed").length;
+    const failed = calls.filter((call) => call.status === "failed").length;
+    const pendingTasks = tasks.filter((task) => task.status === "pending").length;
+    const callRows = calls.map((call) => `<tr><td>${fmt(call.created_at)}</td><td>${esc((call.agent_type || "front_desk").replaceAll("_", " "))}</td><td>${esc(call.contact_name || call.from_number || call.to_number || "Unknown")}</td><td>${esc(call.purpose)}</td><td><span class="pill ${esc(call.status)}">${esc(call.status)}</span></td><td>${esc(call.outcome || "—")}</td><td><a href="/admin/voice?call=${encodeURIComponent(call.id)}">Open</a></td></tr>`).join("");
+    const taskRows = tasks.map((task) => `<tr><td>${esc(task.task_type.replaceAll("_", " "))}</td><td>${esc(task.notes || "—")}</td><td><span class="pill ${esc(task.status)}">${esc(task.status)}</span></td><td>${fmt(task.due_at)}</td></tr>`).join("");
+    const transcriptHtml = transcript.map((segment) => `<div class="msg ${segment.speaker === "agent" ? "outbound" : "inbound"}"><strong>${esc(segment.speaker === "agent" ? "Ali" : "Caller")}</strong>${segment.time_in_call_seconds === null ? "" : ` · ${segment.time_in_call_seconds}s`}<br>${esc(segment.text)}</div>`).join("");
+    const body = `<div class="stats"><div class="stat"><span>Connections ready</span><strong>${readyCount}/${readiness.length}</strong><span>${c.voiceEnabled ? "Live calling configured" : "Inbound and test mode"}</span></div><div class="stat"><span>Recent completed calls</span><strong>${completed}</strong><span>In the latest ${calls.length} records</span></div><div class="stat"><span>Pending follow-ups</span><strong>${pendingTasks}</strong><span>Created from voice outcomes</span></div><div class="stat"><span>Failed calls</span><strong>${failed}</strong><span>Available for review</span></div></div>
+      <div class="voice-hero"><section class="card"><h3>Talk to Ali</h3><p class="muted">Use the same assistant configured for Ray's office phone. This private browser session is the fastest way to test the greeting, scripts, Dari/English switching, CRM capture, and live property lookup.</p>${c.ELEVENLABS_AGENT_ID ? `<div class="outcome">Ali is ready. Use <strong>Start a call</strong> in the lower-right corner.</div><elevenlabs-convai agent-id="${esc(c.ELEVENLABS_AGENT_ID)}"></elevenlabs-convai>` : '<div class="empty-state">The ElevenLabs agent ID still needs to be configured.</div>'}<p class="muted">Microphone permission is required. Never provide lockbox codes, banking details, or client-confidential information in a test call.</p></section>
+      <section class="card"><h3>Connected workflow</h3><div class="focus-list"><div class="focus-item"><span class="focus-dot ready"></span><div class="focus-copy"><strong>Answer and qualify</strong><span>Ali confirms caller identity, intent, urgency, and callback details.</span></div><span class="focus-tag">Voice</span></div><div class="focus-item"><span class="focus-dot ready"></span><div class="focus-copy"><strong>Save to the lead timeline</strong><span>The signed ElevenLabs tool writes the conversation into this CRM.</span></div><span class="focus-tag">CRM</span></div><div class="focus-item"><span class="focus-dot ${c.mlsEnabled ? "ready" : ""}"></span><div class="focus-copy"><strong>Live property facts</strong><span>Address lookups use the licensed PropTx connection and safe field policy.</span></div><span class="focus-tag">MLS</span></div><div class="focus-item"><span class="focus-dot ready"></span><div class="focus-copy"><strong>Create the next action</strong><span>Urgent calls alert Ray; ordinary calls remain in the follow-up queue.</span></div><span class="focus-tag">Follow-up</span></div></div></section></div>
+      <section class="card"><h3>Connection checklist</h3><div class="cards">${readiness.map(([name, ready, note]) => `<div class="focus-item"><span class="focus-dot ${ready ? "ready" : ""}"></span><div class="focus-copy"><strong>${esc(name)}</strong><span>${esc(note)}</span></div><span class="focus-tag">${ready ? "Ready" : "Setup"}</span></div>`).join("")}</div><p class="muted">Inbound lead tool: <code>/webhooks/elevenlabs/capture-lead</code> · Property tool: <code>/webhooks/elevenlabs/mls-address</code></p></section>
+      <h2>Call history</h2><table><tr><th>Created</th><th>Agent</th><th>Contact</th><th>Purpose</th><th>Status</th><th>Outcome</th><th></th></tr>${callRows || '<tr><td colspan="7">No calls have been recorded yet.</td></tr>'}</table>
+      ${selected ? `<div class="attention-grid" style="margin-top:18px"><section class="card"><h3>${esc(selected.contact_name || selected.from_number || selected.to_number || "Voice call")}</h3><p class="muted">${esc(selected.direction)} · ${esc(selected.status)} · ${fmt(selected.created_at)}</p><p><strong>Purpose</strong><br>${esc(selected.purpose)}</p><p><strong>Consent basis</strong><br>${esc(selected.consent_basis)}</p><p><strong>Summary</strong><br>${esc(selected.summary || "Not available yet")}</p><p><strong>Next action</strong><br>${esc(selected.next_action || "Review after the call")}</p>${selected.error ? `<div class="error">${esc(selected.error)}</div>` : ""}</section><section class="card"><h3>Transcript</h3>${transcriptHtml || '<div class="empty-state">The verified post-call transcript will appear here.</div>'}</section></div>` : ""}
+      <h2>Follow-up queue</h2><table><tr><th>Task</th><th>Notes</th><th>Status</th><th>Due</th></tr>${taskRows || '<tr><td colspan="4">No voice follow-ups are waiting.</td></tr>'}</table>
+      <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>`;
+    reply.type("text/html");
+    return layout("Voice Operations", body);
+  });
+
+  app.get("/systems", async (_req, reply) => {
+    const c = config();
+    const [leads, lessons, pendingFeedback] = await Promise.all([
+      db().query.leads.findMany({ limit: 1 }),
+      db().query.lessons.findMany({ where: eq(schema.lessons.active, true) }),
+      db().query.agentFeedback.findMany({ where: eq(schema.agentFeedback.distilled, false) }),
+    ]);
+    const body = `<p>This is the front door for every active control surface. Operational consoles stay separate, but their ownership and purpose are explicit.</p>
+      <div class="cards">
+        <div class="card"><h3>Central Command</h3><p>Leads, approvals, offers, showings, jobs, voice and GHL.</p><p class="status">Online</p><a class="btn neutral" href="/admin">Open</a></div>
+        <div class="card"><h3>Ali</h3><p>Omnichannel lead memory, review queue, briefings and conversations.</p><p class="status">Connected</p><a class="btn neutral" href="/ali-dashboard/">Open</a></div>
+        <div class="card"><h3>Campaign Dashboard</h3><p>Marketing campaigns, creative output and publishing operations.</p><p class="status">Connected</p><a class="btn neutral" href="https://campaign.87.99.139.222.sslip.io/">Open</a></div>
+        <div class="card"><h3>VOW Property Search</h3><p>Authenticated consumer MLS search backed by PropTx. This is a customer portal, not an operations dashboard.</p><p class="status">Connected</p><a class="btn neutral" href="https://homes.rayrealestate.ca/" target="_blank" rel="noreferrer">Open</a></div>
+        <div class="card"><h3>Portainer</h3><p>Infrastructure-only container console. Use for deployment and logs.</p><p class="status">Admin</p><a class="btn neutral" href="https://87.99.139.222:9443/">Open</a></div>
+      </div>
+      <h3>Channel connections</h3>
+      <table><tr><th>Channel</th><th>Connection</th><th>What Ali can do</th></tr>
+      <tr><td>Google / Gmail</td><td><span class="pill ${c.gmailEnabled ? "active" : "pending"}">${c.gmailEnabled ? "Connected" : "Setup"}</span></td><td>Read assigned email, reply, and keep the lead timeline synchronized.</td></tr>
+      <tr><td>WhatsApp + Instagram</td><td><span class="pill ${c.boosendEnabled ? "active" : "pending"}">${c.boosendEnabled ? "Connected" : "Setup"}</span></td><td>Receive and reply through the Boosend omnichannel connection.</td></tr>
+      <tr><td>Telegram</td><td><span class="pill ${c.telegramEnabled ? "active" : "pending"}">${c.telegramEnabled ? "Connected" : "Setup"}</span></td><td>Lead conversations and authorized operations commands.</td></tr>
+      <tr><td>GoHighLevel + SMS</td><td><span class="pill ${c.highLevelEnabled ? "active" : "pending"}">${c.highLevelEnabled ? "Configured" : "Setup"}</span></td><td>CRM context is available to Ali and voice; SMS remains governed by the GHL workflow.</td></tr>
+      <tr><td>Facebook Messenger</td><td><span class="pill pending">Not connected</span></td><td>Requires a supported inbox/webhook connection before Ali can send or receive.</td></tr>
+      <tr><td>Voice / phone</td><td><span class="pill ${c.ELEVENLABS_AGENT_ID && c.ELEVENLABS_WEBHOOK_SECRET ? "active" : "pending"}">${c.ELEVENLABS_AGENT_ID && c.ELEVENLABS_WEBHOOK_SECRET ? "Connected" : "Setup"}</span></td><td>Answer, qualify, capture the lead, perform safe MLS lookups, and create follow-up.</td></tr>
+      <tr><td>PropTx MLS + VOW</td><td><span class="pill ${c.mlsEnabled ? "active" : "pending"}">${c.mlsEnabled ? "Connected" : "Setup"}</span></td><td>Live licensed property search with an authenticated consumer portal.</td></tr></table>
+      <h3>Shared intelligence</h3>
+      <table><tr><th>Area</th><th>Status</th></tr>
+      <tr><td>Production database</td><td>${leads.length ? "Connected" : "Ready"}</td></tr>
+      <tr><td>Active standing lessons</td><td>${lessons.length}</td></tr>
+      <tr><td>Edits waiting for nightly distillation</td><td>${pendingFeedback.length}</td></tr>
+      <tr><td>Nightly learning schedule</td><td>03:00 ${esc(c.TZ)}</td></tr></table>
+      <p class="muted">The inactive legacy realtor-agent dashboard container is intentionally excluded because it duplicates Central Command and has no public route.</p>`;
+    reply.type("text/html");
+    return layout("Systems & dashboards", body);
+  });
+
+  app.get("/learning", async (_req, reply) => {
+    const lessons = await db().query.lessons.findMany({
+      orderBy: desc(schema.lessons.createdAt),
+      limit: 200,
+    });
+    const feedback = await db().query.agentFeedback.findMany({
+      orderBy: desc(schema.agentFeedback.createdAt),
+      limit: 50,
+    });
+    const body = `<p>Lessons come only from explicit instructions, corrections, or approved message edits. Nightly distillation is conservative and every lesson remains visible and reversible.</p>
+      <form method="post" action="/admin/learning">
+        <p><label>Note or standing instruction<br><textarea name="lesson" required maxlength="500" placeholder="Example: Keep first replies under three sentences and ask one question."></textarea></label></p>
+        <p><label>Category <input type="text" name="category" value="general" maxlength="40"></label>
+        <label><input type="checkbox" name="activate" value="yes"> Apply to agent behavior immediately</label>
+        <button class="btn approve" type="submit">Save note</button></p>
+      </form>
+      <h3>Lessons and notes</h3>
+      <table><tr><th>Instruction</th><th>Category</th><th>Source</th><th>Added</th><th>Status</th></tr>
+      ${lessons.map((l) => `<tr><td>${esc(l.lesson)}</td><td>${esc(l.category)}</td><td>${esc(l.sourceType)}</td><td>${fmt(l.createdAt)}</td><td><form class="inline" method="post" action="/admin/learning/${l.id}/toggle"><button class="btn ${l.active ? "approve" : "neutral"}" type="submit">${l.active ? "Active" : "Inactive"}</button></form></td></tr>`).join("")}
+      </table>${lessons.length ? "" : '<p class="muted">No lessons yet.</p>'}
+      <h3>Raw edit evidence</h3><p class="muted">${feedback.length} recent draft-versus-sent examples; ${feedback.filter((f) => !f.distilled).length} still waiting for the nightly distiller.</p>`;
+    reply.type("text/html");
+    return layout("Learning & notes", body);
+  });
+
+  app.post<{ Body: { lesson?: string; category?: string; activate?: string } }>("/learning", async (req, reply) => {
+    const lesson = (req.body?.lesson ?? "").trim();
+    const category = (req.body?.category ?? "general").trim().slice(0, 40) || "general";
+    if (lesson.length >= 8) {
+      await db().insert(schema.lessons).values({
+        lesson: lesson.slice(0, 500),
+        category,
+        sourceType: "instruction",
+        active: req.body?.activate === "yes",
+      });
+    }
+    return reply.redirect("/admin/learning");
+  });
+
+  app.post<{ Params: { id: string } }>("/learning/:id/toggle", async (req, reply) => {
+    const lesson = await db().query.lessons.findFirst({ where: eq(schema.lessons.id, req.params.id) });
+    if (lesson) {
+      await db().update(schema.lessons).set({ active: !lesson.active }).where(eq(schema.lessons.id, lesson.id));
+    }
+    return reply.redirect("/admin/learning");
   });
 
   app.get("/showings", async (_req, reply) => {

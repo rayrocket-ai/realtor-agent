@@ -61,7 +61,7 @@ function mockClient(): MinimalAnthropicClient {
             server_tool_use: null,
             service_tier: null,
           },
-        } as Anthropic.Message;
+        } as unknown as Anthropic.Message;
       },
     },
   };

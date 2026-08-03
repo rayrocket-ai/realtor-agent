@@ -28,3 +28,10 @@ describe("verifySignature", () => {
     expect(verifySignature(body, other, secret)).toBe(false);
   });
 });
+
+describe("voice webhook authentication primitive", () => {
+  it("does not accept an empty secret or a different secret", () => {
+    expect(verifySignature(body, "", secret)).toBe(false);
+    expect(verifySignature(body, "wrong", secret)).toBe(false);
+  });
+});

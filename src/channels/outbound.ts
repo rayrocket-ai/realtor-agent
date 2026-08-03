@@ -34,13 +34,33 @@ export async function sendToLead(lead: Lead, text: string): Promise<void> {
       .onConflictDoNothing();
   }
 
-  const identity = await d.query.channelIdentities.findFirst({
+  let identity = await d.query.channelIdentities.findFirst({
     where: and(
       eq(schema.channelIdentities.leadId, lead.id),
       eq(schema.channelIdentities.channel, channel),
     ),
   });
-  if (!identity) throw new Error(`Lead ${lead.id} has no ${channel} channel identity`);
+  if (!identity && lead.email) {
+    await d
+      .insert(schema.channelIdentities)
+      .values({ leadId: lead.id, channel: "gmail", externalId: lead.email })
+      .onConflictDoNothing();
+    identity = await d.query.channelIdentities.findFirst({
+      where: and(
+        eq(schema.channelIdentities.leadId, lead.id),
+        eq(schema.channelIdentities.channel, "gmail"),
+      ),
+    });
+    if (identity) channel = "gmail";
+  }
+  if (!identity) {
+    const identities = await d.query.channelIdentities.findMany({
+      where: eq(schema.channelIdentities.leadId, lead.id),
+    });
+    identity = identities.find((candidate) => candidate.channel !== "webform");
+    if (identity) channel = identity.channel;
+  }
+  if (!identity) throw new Error(`Lead ${lead.id} has no reachable channel identity`);
 
   let externalMsgId: string | null = null;
   const c = config();

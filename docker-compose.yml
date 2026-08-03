@@ -34,6 +34,8 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      COMMAND_DOMAIN: ${COMMAND_DOMAIN:-command.87.99.139.222.sslip.io}
+      VOW_DOMAIN: ${VOW_DOMAIN:-homes.rayrealestate.ca}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

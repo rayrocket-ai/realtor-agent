@@ -55,7 +55,6 @@ describe("parseLooseDate", () => {
   it("parses 'Jul 12, 2026 from 2:00 PM to 2:30 PM'", () => {
     const d = parseLooseDate("Jul 12, 2026 from 2:00 PM to 2:30 PM");
     expect(d).not.toBeNull();
-    expect(d!.getMonth()).toBe(6);
-    expect(d!.getDate()).toBe(12);
+    expect(d!.toISOString()).toBe("2026-07-12T18:00:00.000Z");
   });
 });

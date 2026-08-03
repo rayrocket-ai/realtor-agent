@@ -242,6 +242,61 @@ export const appState = pgTable("app_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Authenticated consumer property-search accounts. The VOW routes deliberately
+// keep this identity and audit trail separate from CRM leads.
+export const vowConsumers = pgTable(
+  "vow_consumers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    passwordExpiresAt: timestamp("password_expires_at", { withTimezone: true }).notNull(),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    verificationTokenHash: text("verification_token_hash"),
+    verificationExpiresAt: timestamp("verification_expires_at", { withTimezone: true }),
+    termsVersion: text("terms_version").notNull(),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }).notNull(),
+    brokerRelationshipAcknowledged: boolean("broker_relationship_acknowledged").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("vow_consumers_email_unique").on(t.email),
+    uniqueIndex("vow_consumers_username_unique").on(t.username),
+  ],
+);
+
+export const vowSessions = pgTable(
+  "vow_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    consumerId: uuid("consumer_id").notNull().references(() => vowConsumers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("vow_sessions_token_unique").on(t.tokenHash),
+    index("vow_sessions_consumer_idx").on(t.consumerId),
+  ],
+);
+
+export const vowAuditLog = pgTable(
+  "vow_audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    consumerId: uuid("consumer_id").references(() => vowConsumers.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("vow_audit_consumer_created_idx").on(t.consumerId, t.createdAt)],
+);
+
 export type Lead = typeof leads.$inferSelect;
 export type Tour = typeof tours.$inferSelect;
 export type PendingMessage = typeof pendingMessages.$inferSelect;

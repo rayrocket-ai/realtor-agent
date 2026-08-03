@@ -9,8 +9,6 @@ import { sendToLead } from "../channels/outbound.js";
 import { getClient, setAnthropicClient, type MinimalAnthropicClient } from "./client.js";
 import { approvalRequired, queueDraft } from "../approvals/messages.js";
 
-const MAX_ITERATIONS = 10;
-const MAX_TOKENS = 4096;
 const MAX_ACTIVE_LESSONS = 50;
 
 export { setAnthropicClient, type MinimalAnthropicClient };
@@ -57,10 +55,10 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
   let finalText = "";
 
   try {
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
+    for (let i = 0; i < c.AGENT_MAX_ITERATIONS; i++) {
       const response = await client.messages.create({
         model: c.ANTHROPIC_MODEL,
-        max_tokens: MAX_TOKENS,
+        max_tokens: c.AGENT_MAX_OUTPUT_TOKENS,
         system: systemPrompt(lessons),
         tools,
         messages,
@@ -102,6 +100,37 @@ export async function runAgentTurn(leadId: string, trigger = "inbound"): Promise
         results.push({ type: "tool_result", tool_use_id: tu.id, content: result, is_error: isError });
       }
       messages.push({ role: "user", content: results });
+    }
+
+    // A model can repeatedly call tools without producing a customer-facing
+    // answer. Force a final text-only completion so the job cannot end silently.
+    if (!finalText) {
+      toolCallLog.push({
+        name: "agent_iteration_limit",
+        iterations: c.AGENT_MAX_ITERATIONS,
+        action: "forced_text_completion",
+      });
+      messages.push({
+        role: "user",
+        content:
+          "Tool use is complete. Reply to the lead now with a concise, accurate message based only on the conversation and tool results. Do not request another tool.",
+      });
+      const response = await client.messages.create({
+        model: c.ANTHROPIC_MODEL,
+        max_tokens: c.AGENT_MAX_OUTPUT_TOKENS,
+        system: systemPrompt(lessons),
+        messages,
+      });
+      inputTokens += response.usage.input_tokens;
+      outputTokens += response.usage.output_tokens;
+      finalText = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      if (!finalText) {
+        finalText = `Thanks — I’ve saved this for ${c.REALTOR_NAME} and asked him to follow up personally.`;
+      }
     }
 
     let queued = false;

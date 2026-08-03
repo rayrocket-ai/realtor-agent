@@ -45,7 +45,7 @@ function scripted(responses: Array<Anthropic.ContentBlock[]>): void {
           id: `msg_${i}`, type: "message", role: "assistant", model: "scripted",
           content, stop_reason: hasTool ? "tool_use" : "end_turn", stop_sequence: null,
           usage: { input_tokens: 10, output_tokens: 10 } as never,
-        } as Anthropic.Message;
+        } as unknown as Anthropic.Message;
       },
     },
   });

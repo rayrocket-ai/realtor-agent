@@ -1,3 +1,48 @@
 {$DOMAIN} {
+	@legacy_admin path /admin /admin/*
+	redir @legacy_admin https://{$COMMAND_DOMAIN}{uri} 302
+
+	handle_path /ali/* {
+		reverse_proxy ali:8080
+	}
+
+	handle /ali-dashboard* {
+		basic_auth {
+			ray $2a$14$6LHOKxbdGV30jK29m4jXEeK0dIKSiNZv6wjLNzgNrveqbnmMlqTEK
+		}
+		reverse_proxy ali-dashboard:8501
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}
+
+{$COMMAND_DOMAIN} {
+	handle_path /ali/* {
+		reverse_proxy ali:8080
+	}
+
+	handle /ali-dashboard* {
+		basic_auth {
+			ray $2a$14$6LHOKxbdGV30jK29m4jXEeK0dIKSiNZv6wjLNzgNrveqbnmMlqTEK
+		}
+		reverse_proxy ali-dashboard:8501
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}
+
+campaign.87.99.139.222.sslip.io {
+	basic_auth {
+		ray $2a$14$6LHOKxbdGV30jK29m4jXEeK0dIKSiNZv6wjLNzgNrveqbnmMlqTEK
+	}
+	reverse_proxy campaign-dashboard:8080
+}
+
+{$VOW_DOMAIN} {
+	rewrite * /vow{uri}
 	reverse_proxy app:3000
 }

@@ -90,16 +90,47 @@ function clean(s: string | null | undefined): string | null {
 }
 
 /** Tolerant date parsing for the formats BrokerBay emails use. */
-export function parseLooseDate(s: string): Date | null {
-  const direct = new Date(s);
-  if (!Number.isNaN(direct.getTime())) return direct;
-  // "Jul 12, 2026 from 2:00 PM to 2:30 PM" → take the first time.
+export function parseLooseDate(s: string, timeZone = "America/Toronto"): Date | null {
+  // BrokerBay notifications omit the zone and use the brokerage's local time.
+  // Parse that form before Date(), which would otherwise interpret it in the
+  // server/container zone (usually UTC) and miss the matching showing by hours.
   const m = s.match(
     /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}).*?(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))/,
   );
   if (m) {
-    const d = new Date(`${m[1]} ${m[2]}`);
-    if (!Number.isNaN(d.getTime())) return d;
+    const wall = new Date(`${m[1]} ${m[2]} UTC`);
+    if (!Number.isNaN(wall.getTime())) {
+      return localWallTimeToUtc(wall, timeZone);
+    }
   }
+  const direct = new Date(s);
+  if (!Number.isNaN(direct.getTime())) return direct;
   return null;
+}
+
+function localWallTimeToUtc(wallAsUtc: Date, timeZone: string): Date {
+  let candidate = wallAsUtc.getTime();
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(candidate));
+    const value = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+    const represented = Date.UTC(
+      value("year"),
+      value("month") - 1,
+      value("day"),
+      value("hour") % 24,
+      value("minute"),
+      value("second"),
+    );
+    candidate += wallAsUtc.getTime() - represented;
+  }
+  return new Date(candidate);
 }

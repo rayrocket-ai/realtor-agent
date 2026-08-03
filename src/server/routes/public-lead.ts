@@ -176,43 +176,45 @@ function formPage(): string {
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(name)} — Real Estate</title>
+<meta name="description" content="Connect directly with ${esc(name)} for help buying, selling, or asking a Greater Toronto Area real estate question. Available in English and Dari.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏡</text></svg>">
 <style>
-  :root{--brand:#2563eb;--brand-dark:#1e40af;--bg:#f8fafc;--card:#ffffff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0}
+  :root{--brand:#0c5fa8;--brand-dark:#082e55;--navy:#082e55;--bg:#f4f7fa;--card:#ffffff;--ink:#102f50;--muted:#61768d;--line:#d7e0e9}
   *{box-sizing:border-box}
-  body{font-family:-apple-system,system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);margin:0;min-height:100vh}
-  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px}
-  header{display:flex;justify-content:space-between;align-items:center;padding:8px 0 4px}
-  .who{font-weight:700;font-size:18px}
-  .who small{display:block;font-weight:400;color:var(--muted);font-size:13px}
-  .langs{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card)}
-  .langs button{border:none;background:none;padding:6px 14px;font-size:14px;cursor:pointer;color:var(--muted)}
-  .langs button.on{background:var(--brand);color:#fff;font-weight:600}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:16px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
-  h1{font-size:22px;margin:0 0 6px}
-  .sub{color:var(--muted);font-size:15px;margin:0 0 12px;line-height:1.5}
-  .bar{height:6px;background:var(--line);border-radius:999px;margin:12px 0 20px;overflow:hidden}
-  .bar i{display:block;height:100%;background:var(--brand);border-radius:999px;transition:width .3s}
-  .q{font-weight:600;font-size:16px;margin:16px 0 10px}
-  .opts{display:flex;flex-direction:column;gap:10px}
-  .opt{display:block;width:100%;text-align:start;padding:14px 16px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);font-size:16px;cursor:pointer;transition:border-color .15s}
-  .opt:hover{border-color:var(--brand)}
-  .opt.sel{border-color:var(--brand);background:#eff6ff;font-weight:600}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#fff 0,#f4f7fa 210px);color:var(--ink);margin:0;min-height:100vh}
+  .wrap{max-width:560px;margin:0 auto;padding:24px 18px 56px}
+  header{display:flex;justify-content:space-between;align-items:center;padding:4px 2px 10px}
+  .who{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:21px;color:var(--navy);letter-spacing:-.01em}
+  .who small{display:block;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-weight:500;color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .langs{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card);box-shadow:0 4px 15px rgba(8,46,85,.06)}
+  .langs button{border:none;background:none;padding:7px 15px;font-size:13px;cursor:pointer;color:var(--muted)}
+  .langs button.on{background:var(--navy);color:#fff;font-weight:700}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;margin-top:14px;box-shadow:0 18px 55px -35px rgba(8,46,85,.45)}
+  h1{font-family:Georgia,"Times New Roman",serif;color:var(--navy);font-size:27px;line-height:1.18;letter-spacing:-.02em;margin:0 0 8px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 14px;line-height:1.6}
+  .bar{height:5px;background:#e1e8ef;border-radius:999px;margin:8px 0 24px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--navy),var(--brand));border-radius:999px;transition:width .3s}
+  .q{font-weight:700;color:var(--navy);font-size:15px;margin:18px 0 11px}
+  .opts{display:flex;flex-direction:column;gap:9px}
+  .opt{display:block;width:100%;text-align:start;padding:14px 16px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font-size:15px;cursor:pointer;transition:border-color .15s,background .15s,transform .15s,box-shadow .15s}
+  .opt:hover{border-color:#8eb3d5;background:#f8fbfe;transform:translateY(-1px);box-shadow:0 8px 18px -15px rgba(8,46,85,.7)}
+  .opt.sel{border-color:var(--brand);background:#f0f6fb;font-weight:700;box-shadow:inset 3px 0 var(--brand)}
   .opt .em{margin-inline-end:10px}
-  input[type=text],input[type=tel],input[type=email],textarea{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;font-size:16px;font-family:inherit;background:var(--card);color:var(--ink)}
-  input:focus,textarea:focus{outline:none;border-color:var(--brand)}
-  label{display:block;font-size:14px;font-weight:600;margin:14px 0 6px}
+  input[type=text],input[type=tel],input[type=email],textarea{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;font-size:15px;font-family:inherit;background:var(--card);color:var(--ink)}
+  input:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 4px rgba(12,95,168,.09)}
+  label{display:block;color:var(--navy);font-size:13px;font-weight:700;margin:14px 0 6px}
   .row{display:flex;gap:10px;margin-top:20px}
-  .btn{flex:1;padding:14px;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer}
-  .next{background:var(--brand);color:#fff}
-  .next:hover{background:var(--brand-dark)}
-  .next:disabled{background:#93c5fd;cursor:not-allowed}
+  .btn{flex:1;padding:13px 18px;border:none;border-radius:999px;font-size:14px;font-weight:700;cursor:pointer}
+  .next{background:var(--navy);color:#fff;box-shadow:0 8px 22px -14px rgba(8,46,85,.8)}
+  .next:hover{background:#0c416f}
+  .next:disabled{background:#91a6ba;cursor:not-allowed}
   .back{background:none;border:1.5px solid var(--line);color:var(--muted);flex:0 0 auto;padding:14px 20px}
   .err{color:#dc2626;font-size:14px;margin-top:10px;min-height:18px}
-  .fine{color:var(--muted);font-size:13px;margin-top:14px;line-height:1.5}
+  .fine{color:var(--muted);font-size:12px;margin-top:17px;line-height:1.55}
   .done{text-align:center;padding:24px 0}
   .done .big{font-size:52px}
   html[dir=rtl] .opt{text-align:right}
+  @media(max-width:520px){.wrap{padding:16px 14px 44px}.card{padding:20px}h1{font-size:24px}.who{font-size:19px}}
 </style></head>
 <body><div class="wrap">
 <header>
