@@ -173,6 +173,19 @@ const assistant = {
 };
 
 const assistantId = process.env.VAPI_ASSISTANT_ID;
+// Vapi replaces the whole model object on PATCH. Preserve the attached knowledge
+// base and toolIds from the live assistant so a prompt sync never wipes them.
+if (assistantId) {
+  try {
+    const existing = await request(`/assistant/${encodeURIComponent(assistantId)}`);
+    if (existing.model?.knowledgeBase) assistant.model.knowledgeBase = existing.model.knowledgeBase;
+    if (Array.isArray(existing.model?.toolIds) && existing.model.toolIds.length) {
+      assistant.model.toolIds = existing.model.toolIds;
+    }
+  } catch {
+    console.error("warning: could not fetch existing assistant; knowledge base not preserved");
+  }
+}
 const saved = assistantId
   ? await request(`/assistant/${encodeURIComponent(assistantId)}`, {
       method: "PATCH",
