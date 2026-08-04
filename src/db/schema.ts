@@ -201,6 +201,68 @@ export const leadSubmissions = pgTable(
   (t) => [index("lead_submissions_lead_idx").on(t.leadId)],
 );
 
+// AI-built profile of each buyer client: requirements, homes seen and reactions,
+// pending offers context, and the suggested next action. Refreshed daily and
+// on demand from the dashboard; feeds the Monday weekly buyer update email.
+export const buyerProfiles = pgTable(
+  "buyer_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    isActiveBuyer: boolean("is_active_buyer").notNull().default(true),
+    summary: text("summary").notNull().default(""),
+    requirements: jsonb("requirements").$type<BuyerRequirements>().notNull().default({}),
+    propertyReactions: jsonb("property_reactions").$type<PropertyReaction[]>().notNull().default([]),
+    nextAction: text("next_action"),
+    // Latest lead/message/showing/offer activity the profile was built from —
+    // used to skip the model call when nothing changed.
+    sourceActivityAt: timestamp("source_activity_at", { withTimezone: true }),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("buyer_profiles_lead_unique").on(t.leadId)],
+);
+
+export interface BuyerRequirements {
+  budget?: string | null;
+  areas?: string[];
+  propertyType?: string | null;
+  bedrooms?: string | null;
+  bathrooms?: string | null;
+  preApproved?: boolean | null;
+  timeline?: string | null;
+  mustHaves?: string[];
+  dealBreakers?: string[];
+}
+
+export interface PropertyReaction {
+  address: string;
+  mlsNumber?: string | null;
+  reaction: "liked" | "mixed" | "disliked" | "no_feedback";
+  notes?: string | null;
+  shownAt?: string | null; // ISO date of the (latest) showing, when known
+}
+
+// One row per re-engagement attempt by the lead-reactivation agent. Attempts
+// made before the lead's latest engagement don't count against new cycles, so
+// tiers reset naturally when a lead replies and goes quiet again.
+export const leadReactivations = pgTable(
+  "lead_reactivations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    tier: integer("tier").notNull(), // days quiet when triggered: 30|60|90
+    outcome: text("outcome").notNull().default("message_drafted"), // message_drafted|realtor_notified
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_reactivations_lead_created_idx").on(t.leadId, t.createdAt)],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -298,6 +360,8 @@ export const vowAuditLog = pgTable(
 );
 
 export type Lead = typeof leads.$inferSelect;
+export type BuyerProfile = typeof buyerProfiles.$inferSelect;
+export type LeadReactivation = typeof leadReactivations.$inferSelect;
 export type Tour = typeof tours.$inferSelect;
 export type PendingMessage = typeof pendingMessages.$inferSelect;
 export type Lesson = typeof lessons.$inferSelect;
