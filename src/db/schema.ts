@@ -246,6 +246,23 @@ export interface PropertyReaction {
   shownAt?: string | null; // ISO date of the (latest) showing, when known
 }
 
+// One row per re-engagement attempt by the lead-reactivation agent. Attempts
+// made before the lead's latest engagement don't count against new cycles, so
+// tiers reset naturally when a lead replies and goes quiet again.
+export const leadReactivations = pgTable(
+  "lead_reactivations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    tier: integer("tier").notNull(), // days quiet when triggered: 30|60|90
+    outcome: text("outcome").notNull().default("message_drafted"), // message_drafted|realtor_notified
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_reactivations_lead_created_idx").on(t.leadId, t.createdAt)],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -344,6 +361,7 @@ export const vowAuditLog = pgTable(
 
 export type Lead = typeof leads.$inferSelect;
 export type BuyerProfile = typeof buyerProfiles.$inferSelect;
+export type LeadReactivation = typeof leadReactivations.$inferSelect;
 export type Tour = typeof tours.$inferSelect;
 export type PendingMessage = typeof pendingMessages.$inferSelect;
 export type Lesson = typeof lessons.$inferSelect;

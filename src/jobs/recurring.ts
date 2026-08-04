@@ -7,6 +7,7 @@ export const RECURRING_JOBS: Record<string, { hour: number; minute: number; week
   "distill-lessons": { hour: 3, minute: 0 },
   "refresh-buyer-profiles": { hour: 6, minute: 30 },
   "buyer-weekly-update": { hour: 8, minute: 0, weekday: 1 },
+  "lead-reactivation": { hour: 10, minute: 0 },
 };
 
 /** Next wall-clock occurrence of hour:minute in tz, from `from`. */
