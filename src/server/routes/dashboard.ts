@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { db, pgPool, schema } from "../../db/client.js";
 import { config } from "../../config.js";
 import { approveOffer, rejectOffer } from "../../offers/approval.js";
@@ -13,11 +13,15 @@ import {
 import { escapeHtml as esc } from "./approvals.js";
 import { labelAnswer } from "../../leads/qualify.js";
 import { requireDashboardSession } from "./dashboard-auth.js";
+import { activeBuyerProfiles } from "../../buyers/profile.js";
+import { enqueue } from "../../jobs/queue.js";
+import type { BuyerRequirements, PropertyReaction } from "../../db/schema.js";
 
 function layout(title: string, body: string): string {
   const descriptions: Record<string, string> = {
     Today: "The decisions, deadlines, relationships, and system signals that need attention now.",
     Leads: "Every relationship, conversation, and next action in one place.",
+    Buyers: "AI-built profiles of every buyer client: requirements, homes seen, reactions, and offers.",
     "Social media leads": "Capture and qualify inbound opportunities from every social channel.",
     Approvals: "Review what Ali plans to send before it reaches a client.",
     Offers: "Prepare, review, and send offer communication with a human checkpoint.",
@@ -67,7 +71,7 @@ function layout(title: string, body: string): string {
       <a class="nav-link" href="/admin"><span class="nav-icon">◫</span>Today</a><a class="nav-link" href="/admin/approvals"><span class="nav-icon">✓</span>Approvals</a>
     </div>
     <div class="nav-group"><div class="nav-label">Relationships</div>
-      <a class="nav-link" href="/admin/leads"><span class="nav-icon">◎</span>Leads</a><a class="nav-link" href="/admin/social"><span class="nav-icon">↗</span>Social Media</a>
+      <a class="nav-link" href="/admin/leads"><span class="nav-icon">◎</span>Leads</a><a class="nav-link" href="/admin/buyers"><span class="nav-icon">⌂</span>Buyers</a><a class="nav-link" href="/admin/social"><span class="nav-icon">↗</span>Social Media</a>
     </div>
     <div class="nav-group"><div class="nav-label">Transactions</div>
       <a class="nav-link" href="/admin/offers"><span class="nav-icon">◇</span>Offers</a><a class="nav-link" href="/admin/showings"><span class="nav-icon">▣</span>Showings</a><a class="nav-link" href="/admin/tours"><span class="nav-icon">⌘</span>Tours</a><a class="nav-link" href="/admin/feedback"><span class="nav-icon">☆</span>Feedback</a><a class="nav-link" href="/admin/listings"><span class="nav-icon">⌂</span>My Listings</a>
@@ -245,6 +249,103 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     </table>${rows.length === 0 ? '<p class="muted">No leads yet. They appear automatically when someone emails or messages you.</p>' : ""}`;
     reply.type("text/html");
     return layout("Leads", body);
+  });
+
+  app.get("/buyers", async (_req, reply) => {
+    const buyers = await activeBuyerProfiles();
+    const leadIds = buyers.map((b) => b.lead.id);
+    const openOffers = leadIds.length
+      ? await db().query.offers.findMany({
+          where: inArray(schema.offers.leadId, leadIds),
+          orderBy: desc(schema.offers.updatedAt),
+        })
+      : [];
+    const offersByLead = new Map<string, typeof openOffers>();
+    for (const o of openOffers) {
+      if (o.status === "rejected" || o.status === "expired") continue;
+      const list = offersByLead.get(o.leadId) ?? [];
+      list.push(o);
+      offersByLead.set(o.leadId, list);
+    }
+
+    const reactionPill = (r: PropertyReaction["reaction"]): string =>
+      r === "liked" ? "active" : r === "mixed" ? "pending" : r === "disliked" ? "rejected" : "";
+    const reactionLabel = (r: PropertyReaction["reaction"]): string =>
+      r === "no_feedback" ? "no feedback" : r;
+
+    const totalHomes = buyers.reduce((n, b) => n + b.profile.propertyReactions.length, 0);
+    const totalLiked = buyers.reduce(
+      (n, b) => n + b.profile.propertyReactions.filter((r) => r.reaction === "liked").length,
+      0,
+    );
+    const totalOffers = [...offersByLead.values()].reduce((n, list) => n + list.length, 0);
+
+    const cards = buyers
+      .map(({ profile, lead }) => {
+        const req = (profile.requirements ?? {}) as BuyerRequirements;
+        const chips = [
+          req.budget ? `Budget: ${req.budget}` : "",
+          req.areas?.length ? `Areas: ${req.areas.join(", ")}` : "",
+          req.propertyType ? `Type: ${req.propertyType}` : "",
+          req.bedrooms ? `Beds: ${req.bedrooms}` : "",
+          req.preApproved === true ? "Pre-approved ✓" : req.preApproved === false ? "Not pre-approved" : "",
+          req.timeline ? `Timeline: ${req.timeline}` : "",
+        ]
+          .filter(Boolean)
+          .map((chip) => `<span class="pill">${esc(chip)}</span>`)
+          .join(" ");
+        const homes = profile.propertyReactions
+          .map(
+            (r) => `<tr><td>${esc(r.address)}${r.mlsNumber ? ` <span class="muted">MLS ${esc(r.mlsNumber)}</span>` : ""}</td>
+              <td>${esc(r.shownAt ?? "")}</td>
+              <td><span class="pill ${reactionPill(r.reaction)}">${esc(reactionLabel(r.reaction))}</span></td>
+              <td class="muted">${esc(r.notes ?? "")}</td></tr>`,
+          )
+          .join("");
+        const leadOffers = (offersByLead.get(lead.id) ?? [])
+          .map(
+            (o) => `<p><span class="pill ${esc(o.status)}">${esc(o.status.replaceAll("_", " "))}</span>
+              <strong>${esc(o.propertyAddress)}</strong>
+              ${(o.terms as { price?: number })?.price ? `<span class="muted">$${Number((o.terms as { price?: number }).price).toLocaleString("en-CA")}</span>` : ""}</p>`,
+          )
+          .join("");
+        return `<div class="panel" style="margin:14px 0">
+          <div class="panel-head"><div>
+            <h2><a href="/admin/leads/${lead.id}">${esc(lead.name ?? lead.email ?? lead.phone ?? "Unnamed buyer")}</a>
+              <span class="pill ${esc(lead.stage)}">${esc(stageLabel(lead.stage))}</span>
+              ${lead.paused ? '<span class="pill paused">AI paused</span>' : ""}</h2>
+            <p>${esc(lead.email ?? "")} ${esc(lead.phone ?? "")}</p>
+          </div><span class="muted">Profile updated ${fmt(profile.generatedAt)}</span></div>
+          <p>${esc(profile.summary || "No summary yet — refresh profiles to build one.")}</p>
+          ${chips ? `<p>${chips}</p>` : ""}
+          ${req.mustHaves?.length ? `<p class="muted">Must-haves: ${esc(req.mustHaves.join(", "))}</p>` : ""}
+          ${req.dealBreakers?.length ? `<p class="muted">Deal-breakers: ${esc(req.dealBreakers.join(", "))}</p>` : ""}
+          ${homes ? `<table><tr><th>Home</th><th>Shown</th><th>Reaction</th><th>Notes</th></tr>${homes}</table>` : '<p class="muted">No homes seen yet.</p>'}
+          ${leadOffers ? `<h3>Offers in play</h3>${leadOffers}` : ""}
+          ${profile.nextAction ? `<p><strong>Next:</strong> ${esc(profile.nextAction)}</p>` : ""}
+        </div>`;
+      })
+      .join("");
+
+    const body = `<div class="stats">
+        <div class="stat"><span>Active buyers</span><strong>${buyers.length}</strong><span>Profiles built by the buyer agent</span></div>
+        <div class="stat"><span>Homes in play</span><strong>${totalHomes}</strong><span>${totalLiked} liked</span></div>
+        <div class="stat"><span>Offers in play</span><strong>${totalOffers}</strong><span>Pending approval or sent</span></div>
+      </div>
+      <form class="inline" method="post" action="/admin/buyers/refresh"><button class="btn neutral" type="submit">Refresh profiles now</button></form>
+      <span class="muted"> Profiles rebuild automatically every morning at 6:30; the weekly buyer update email goes out Mondays at 8:00.</span>
+      ${cards || '<div class="empty-state" style="margin-top:18px">No buyer profiles yet. Hit "Refresh profiles now" — the buyer agent scans every lead with showings, tours, offers, or a buying inquiry and builds profiles for the real buyers.</div>'}`;
+    reply.type("text/html");
+    return layout("Buyers", body);
+  });
+
+  app.post("/buyers/refresh", async (_req, reply) => {
+    await enqueue({
+      type: "refresh-buyer-profiles",
+      payload: { force: false },
+      dedupeKey: "refresh-buyer-profiles:manual",
+    });
+    return reply.redirect("/admin/buyers");
   });
 
   app.get("/social", async (_req, reply) => {

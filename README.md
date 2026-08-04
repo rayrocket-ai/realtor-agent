@@ -12,6 +12,7 @@ Built for a solo agent running everything on one small server (e.g. a Hetzner VP
 - **Knows when to shut up** — if you reply to a lead yourself (from Gmail or the Boosend console), the assistant pauses on that lead for 4 hours. You can also pause any lead permanently from the dashboard.
 - **Escalates to you** — legal/financing questions, upset leads, or "can I talk to Ray?" pause the AI and email you immediately.
 - **Dashboard** — a simple password-protected page at `/admin`: all leads, full timelines, pending offers (edit + approve), showings, manual takeover.
+- **Buyer profiles + weekly update** — a buyer agent scans every buyer client's conversations, showings, tours, and offers, and builds an AI profile per buyer: their requirements (budget, areas, pre-approval, must-haves), every home they've seen with liked/disliked reactions, offers in play, and a suggested next step. Profiles live at `/admin/buyers`, refresh daily at 6:30 (or on demand), and every Monday at 8:00 you get a weekly buyer-clients update email.
 - **Social media lead capture** — a public page at `/connect` you put in your Instagram/TikTok bio. Viewers pick *buying / selling / general question*, answer a few qualifying questions (timeline, pre-approval, budget…), and leave their contact info — in **English or Dari (دری)** via a toggle. Every submission is auto-scored hot/warm/cold, emailed to you, and lands on the dashboard; leads who leave an email get picked up by the AI assistant automatically (in their chosen language).
 
 ## Setup (about 30 minutes)
