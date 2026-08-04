@@ -14,6 +14,7 @@ import { escapeHtml as esc } from "./approvals.js";
 import { labelAnswer } from "../../leads/qualify.js";
 import { requireDashboardSession } from "./dashboard-auth.js";
 import { activeBuyerProfiles } from "../../buyers/profile.js";
+import { recentMatchesByLead } from "../../listings/matcher.js";
 import { enqueue } from "../../jobs/queue.js";
 import type { BuyerRequirements, PropertyReaction } from "../../db/schema.js";
 
@@ -254,12 +255,15 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get("/buyers", async (_req, reply) => {
     const buyers = await activeBuyerProfiles();
     const leadIds = buyers.map((b) => b.lead.id);
-    const openOffers = leadIds.length
-      ? await db().query.offers.findMany({
-          where: inArray(schema.offers.leadId, leadIds),
-          orderBy: desc(schema.offers.updatedAt),
-        })
-      : [];
+    const [openOffers, matchesByLead] = await Promise.all([
+      leadIds.length
+        ? db().query.offers.findMany({
+            where: inArray(schema.offers.leadId, leadIds),
+            orderBy: desc(schema.offers.updatedAt),
+          })
+        : Promise.resolve([]),
+      recentMatchesByLead(leadIds),
+    ]);
     const offersByLead = new Map<string, typeof openOffers>();
     for (const o of openOffers) {
       if (o.status === "rejected" || o.status === "expired") continue;
@@ -322,6 +326,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
           ${req.dealBreakers?.length ? `<p class="muted">Deal-breakers: ${esc(req.dealBreakers.join(", "))}</p>` : ""}
           ${homes ? `<table><tr><th>Home</th><th>Shown</th><th>Reaction</th><th>Notes</th></tr>${homes}</table>` : '<p class="muted">No homes seen yet.</p>'}
           ${leadOffers ? `<h3>Offers in play</h3>${leadOffers}` : ""}
+          ${(matchesByLead.get(lead.id) ?? []).length ? `<p class="muted">Recently matched listings: ${(matchesByLead.get(lead.id) ?? []).map((m) => `${esc(m.address ?? m.mlsNumber ?? "listing")}${m.listPrice ? ` ($${m.listPrice.toLocaleString("en-CA")})` : ""}`).join(" · ")}</p>` : ""}
           ${profile.nextAction ? `<p><strong>Next:</strong> ${esc(profile.nextAction)}</p>` : ""}
         </div>`;
       })

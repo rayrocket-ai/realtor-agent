@@ -7,6 +7,7 @@ import { distillLessonsHandler } from "./distill-lessons.js";
 import { morningBriefingHandler } from "./morning-briefing.js";
 import { refreshBuyerProfilesHandler, buyerWeeklyUpdateHandler } from "./buyer-profiles.js";
 import { leadReactivationHandler } from "./lead-reactivation.js";
+import { listingMatcherHandler } from "./listing-matcher.js";
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 
@@ -22,4 +23,5 @@ export const handlers: Record<string, JobHandler> = {
   "refresh-buyer-profiles": refreshBuyerProfilesHandler,
   "buyer-weekly-update": buyerWeeklyUpdateHandler,
   "lead-reactivation": leadReactivationHandler,
+  "listing-matcher": listingMatcherHandler,
 };

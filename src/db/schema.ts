@@ -263,6 +263,25 @@ export const leadReactivations = pgTable(
   (t) => [index("lead_reactivations_lead_created_idx").on(t.leadId, t.createdAt)],
 );
 
+// New MLS listings the matcher agent has already surfaced to a buyer, so the
+// same property is never pitched to the same lead twice.
+export const listingMatches = pgTable(
+  "listing_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    listingKey: text("listing_key").notNull(),
+    mlsNumber: text("mls_number"),
+    address: text("address"),
+    listPrice: integer("list_price"),
+    matchedArea: text("matched_area"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("listing_matches_lead_listing_unique").on(t.leadId, t.listingKey)],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -362,6 +381,7 @@ export const vowAuditLog = pgTable(
 export type Lead = typeof leads.$inferSelect;
 export type BuyerProfile = typeof buyerProfiles.$inferSelect;
 export type LeadReactivation = typeof leadReactivations.$inferSelect;
+export type ListingMatch = typeof listingMatches.$inferSelect;
 export type Tour = typeof tours.$inferSelect;
 export type PendingMessage = typeof pendingMessages.$inferSelect;
 export type Lesson = typeof lessons.$inferSelect;

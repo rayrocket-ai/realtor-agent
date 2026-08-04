@@ -13,7 +13,7 @@ export const morningBriefingHandler: JobHandler = async () => {
   const c = config();
   const since = new Date(Date.now() - DAY);
 
-  const [runs, pendingMsgs, pendingOffers, upcoming, feedbackDue, recentLeads, reactivations] = await Promise.all([
+  const [runs, pendingMsgs, pendingOffers, upcoming, feedbackDue, recentLeads, reactivations, listingMatches] = await Promise.all([
     d.query.agentRuns.findMany({ where: gte(schema.agentRuns.createdAt, since), limit: 200 }),
     d.query.pendingMessages.findMany({ where: eq(schema.pendingMessages.status, "pending") }),
     d.query.offers.findMany({ where: eq(schema.offers.status, "pending_approval") }),
@@ -25,6 +25,7 @@ export const morningBriefingHandler: JobHandler = async () => {
     d.query.listingShowings.findMany({ where: eq(schema.listingShowings.followupStatus, "active"), limit: 50 }),
     d.query.leads.findMany({ orderBy: desc(schema.leads.updatedAt), limit: 15 }),
     d.query.leadReactivations.findMany({ where: gte(schema.leadReactivations.createdAt, since), limit: 20 }),
+    d.query.listingMatches.findMany({ where: gte(schema.listingMatches.createdAt, since), limit: 30 }),
   ]);
 
   const facts = {
@@ -41,6 +42,9 @@ export const morningBriefingHandler: JobHandler = async () => {
     recentlyActiveLeads: recentLeads.map((l) => `${l.name ?? l.email ?? l.phone ?? "?"} [${l.stage}]${l.paused ? " PAUSED" : ""}`),
     quietLeadsReengagedLast24h: reactivations.map(
       (r) => `${r.tier}-day tier, ${r.outcome === "realtor_notified" ? "no channel — Ray notified" : "check-in drafted"}`,
+    ),
+    newListingMatchesLast24h: listingMatches.map(
+      (m) => `${m.address ?? m.mlsNumber ?? m.listingKey}${m.listPrice ? ` ($${m.listPrice.toLocaleString("en-CA")})` : ""}`,
     ),
   };
 
