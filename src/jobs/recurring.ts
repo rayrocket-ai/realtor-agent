@@ -8,6 +8,7 @@ export const RECURRING_JOBS: Record<string, { hour: number; minute: number; week
   "refresh-buyer-profiles": { hour: 6, minute: 30 },
   "buyer-weekly-update": { hour: 8, minute: 0, weekday: 1 },
   "lead-reactivation": { hour: 10, minute: 0 },
+  "listing-matcher": { hour: 9, minute: 0 },
 };
 
 /** Next wall-clock occurrence of hour:minute in tz, from `from`. */
